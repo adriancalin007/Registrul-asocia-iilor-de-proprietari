@@ -1,0 +1,726 @@
+// ============================================================
+// BLOC-UAT — Prisma Schema
+// English naming, best practices
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  OWNER
+  MANAGER
+  BOARD_PRESIDENT
+  AUDITOR
+  SUPPLIER
+  UAT_OPERATOR
+  SUPER_ADMIN
+}
+
+enum AssociationStatus {
+  PENDING           // submitted, not yet opened
+  UNDER_REVIEW      // operator opened the file
+  NEEDS_COMPLETION  // missing documents, association can resubmit
+  ACTIVE
+  SUSPENDED
+  REJECTED          // fraud/false data — irreversible
+  INACTIVE
+}
+
+enum DocumentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  EXPIRED
+}
+
+enum ConsultationStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+enum IssueStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum RFQStatus {
+  DRAFT
+  PUBLISHED
+  UNDER_EVALUATION
+  AWARDED
+  CANCELLED
+  ARCHIVED
+}
+
+enum QuoteStatus {
+  SUBMITTED
+  UNDER_EVALUATION
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum CertificateStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  ISSUED
+  EXPIRED
+}
+
+enum CertificateType {
+  PAYMENTS_UP_TO_DATE
+  OWNERSHIP
+  RESERVE_FUND
+  GENERAL
+}
+
+enum SupplierStatus {
+  PENDING
+  VERIFIED
+  SUSPENDED
+  REJECTED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  UNPROCESSED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  CREATE
+  UPDATE
+  DELETE
+  VIEW
+  APPROVE
+  REJECT
+  CONTEXT_SWITCH
+  EXPORT
+  GENERATE_DOCUMENT
+}
+
+// ============================================================
+// UAT (Unitate Administrativ-Teritoriala)
+// ============================================================
+
+model UAT {
+  id          String   @id @default(cuid())
+  name        String
+  county      String
+  sirutaCode  String   @unique
+  email       String?
+  phone       String?
+  website     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  associations   Association[]
+  operators      UATOperator[]
+  suppliers      Supplier[]
+  config         UATConfig?
+  auditLogs      UATAuditLog[]
+}
+
+model UATConfig {
+  id                          String   @id @default(cuid())
+  uatId                       String   @unique
+  uat                         UAT      @relation(fields: [uatId], references: [id])
+  minConsultationQuorum       Int      @default(50)
+  minConsultationDays         Int      @default(7)
+  maxConsultationDays         Int      @default(30)
+  agmNoticeRequiredDays       Int      @default(10)
+  documentCategories          Json     @default("[]")
+  certificateTypes            Json     @default("[]")
+  supplierVerificationRules   Json     @default("{}")
+  updatedAt                   DateTime @updatedAt
+}
+
+// ============================================================
+// USERS
+// ============================================================
+
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  firstName           String?
+  lastName            String?
+  fullName            String
+  phone               String?
+  passwordHash        String?
+  emailVerified       Boolean   @default(false)
+  mfaEnabled          Boolean   @default(false)
+  mfaSecret           String?
+  isActive            Boolean   @default(true)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  lastLoginAt         DateTime?
+
+  // NextAuth
+  accounts            OIDCAccount[]
+  sessions            Session[]
+
+  // Role contexts
+  ownerships          Ownership[]
+  mandates            Mandate[]
+  supplierAccount     Supplier?
+  uatOperatorAccount  UATOperator?
+  superAdminAccount   SuperAdmin?
+
+  notifications       Notification[]
+  auditActions        AuditLog[]
+  uatAuditActions     UATAuditLog[]
+}
+
+model OIDCAccount {
+  id                String  @id @default(cuid())
+  userId            String
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type              String
+  provider          String
+  providerAccountId String
+  refreshToken      String? @db.Text
+  accessToken       String? @db.Text
+  expiresAt         Int?
+  tokenType         String?
+  scope             String?
+  idToken           String? @db.Text
+  sessionState      String?
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expires      DateTime
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model UATOperator {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  uatId     String
+  uat       UAT      @relation(fields: [uatId], references: [id])
+  jobTitle  String?
+  createdAt DateTime @default(now())
+}
+
+model SuperAdmin {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+// ============================================================
+// ASSOCIATION
+// ============================================================
+
+model Association {
+  id                String            @id @default(cuid())
+  uatId             String
+  uat               UAT               @relation(fields: [uatId], references: [id])
+  name              String
+  fiscalCode        String?           @unique
+  address           String
+  neighborhood      String?
+  zone              String?
+  status            AssociationStatus @default(PENDING)
+  // Onboarding documents (stored as JSON with links)
+  registrationDocs  Json              @default("{}")
+  rejectionReason   String?
+  validatedAt       DateTime?
+  validatedBy       String?
+  // Geocoding
+  latitude          Float?
+  longitude         Float?
+  geocodedAt        DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  buildings         Building[]
+  mandates          Mandate[]
+  documents         Document[]
+  consultations     Consultation[]
+  notifications     Notification[]
+  issues            Issue[]
+  rfqs              RFQ[]
+  certificates      Certificate[]
+  agmSessions       AGMSession[]
+  auditLogs         AuditLog[]
+  completionRounds  CompletionRound[]
+}
+
+// ============================================================
+// COMPLETION ROUNDS (dosar resubmission flow)
+// ============================================================
+
+model CompletionRound {
+  id                   String      @id @default(cuid())
+  associationId        String
+  association          Association @relation(fields: [associationId], references: [id])
+  roundNumber          Int
+  requestedBy          String      // userId of UAT operator
+  requestedAt          DateTime    @default(now())
+  missingItems         String      @db.Text
+  completedAt          DateTime?
+  newDocuments         Json        @default("[]") // [{label, url}]
+  associationNotes     String?     @db.Text
+  completionToken      String      @unique @default(cuid())
+  tokenExpiresAt       DateTime
+  isCompleted          Boolean     @default(false)
+
+  @@index([associationId])
+}
+
+// ============================================================
+// BUILDING STRUCTURE
+// ============================================================
+
+model Building {
+  id              String      @id @default(cuid())
+  associationId   String
+  association     Association @relation(fields: [associationId], references: [id])
+  name            String
+  address         String
+  staircaseCount  Int         @default(1)
+  unitCount       Int         @default(0)
+  builtYear       Int?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  units           Unit[]
+}
+
+model Unit {
+  id          String    @id @default(cuid())
+  buildingId  String
+  building    Building  @relation(fields: [buildingId], references: [id])
+  number      String
+  floor       Int?
+  area        Float?
+  shareRatio  Float?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  ownerships  Ownership[]
+}
+
+model Ownership {
+  id          String    @id @default(cuid())
+  unitId      String
+  unit        Unit      @relation(fields: [unitId], references: [id])
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  type        String    @default("OWNER") // OWNER | TENANT | CO_OWNER
+  startDate   DateTime
+  endDate     DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  consultationResponses ConsultationResponse[]
+  certificates          Certificate[]
+}
+
+// ============================================================
+// MANDATES (Manager, Board President, Auditor)
+// ============================================================
+
+model Mandate {
+  id              String      @id @default(cuid())
+  associationId   String
+  association     Association @relation(fields: [associationId], references: [id])
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+  role            UserRole
+  startDate       DateTime
+  expiresAt       DateTime?
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([userId, associationId, role])
+}
+
+// ============================================================
+// DOCUMENTS
+// ============================================================
+
+model Document {
+  id              String         @id @default(cuid())
+  associationId   String
+  association     Association    @relation(fields: [associationId], references: [id])
+  title           String
+  category        String
+  description     String?
+  fileUrl         String
+  fileSize        Int?
+  mimeType        String?
+  version         Int            @default(1)
+  status          DocumentStatus @default(DRAFT)
+  isPublic        Boolean        @default(false)
+  expiresAt       DateTime?
+  uploadedBy      String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  approval        DocumentApproval?
+  auditLogs       AuditLog[]
+}
+
+model DocumentApproval {
+  id          String   @id @default(cuid())
+  documentId  String   @unique
+  document    Document @relation(fields: [documentId], references: [id])
+  approvedBy  String
+  status      String   // APPROVED | REJECTED
+  notes       String?
+  approvedAt  DateTime @default(now())
+}
+
+// ============================================================
+// CONSULTATIONS
+// ============================================================
+
+model Consultation {
+  id              String             @id @default(cuid())
+  associationId   String
+  association     Association        @relation(fields: [associationId], references: [id])
+  title           String
+  description     String?            @db.Text
+  options         Json               // ["Yes", "No", "Abstain"]
+  status          ConsultationStatus @default(DRAFT)
+  startsAt        DateTime
+  expiresAt       DateTime
+  initiatedBy     String
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  responses       ConsultationResponse[]
+  auditLogs       AuditLog[]
+}
+
+model ConsultationResponse {
+  id            String       @id @default(cuid())
+  consultationId String
+  consultation  Consultation @relation(fields: [consultationId], references: [id])
+  ownershipId   String
+  ownership     Ownership    @relation(fields: [ownershipId], references: [id])
+  optionIndex   Int
+  respondedAt   DateTime     @default(now())
+
+  @@unique([consultationId, ownershipId])
+}
+
+// ============================================================
+// CERTIFICATES
+// ============================================================
+
+model Certificate {
+  id            String            @id @default(cuid())
+  associationId String
+  association   Association       @relation(fields: [associationId], references: [id])
+  ownershipId   String
+  ownership     Ownership         @relation(fields: [ownershipId], references: [id])
+  type          CertificateType
+  status        CertificateStatus @default(REQUESTED)
+  requestedAt   DateTime          @default(now())
+  issuedAt      DateTime?
+  expiresAt     DateTime?
+  pdfUrl        String?
+  approvedBy    String?
+  notes         String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  auditLogs     AuditLog[]
+}
+
+// ============================================================
+// ISSUES & MAINTENANCE
+// ============================================================
+
+model Issue {
+  id               String      @id @default(cuid())
+  associationId    String
+  association      Association @relation(fields: [associationId], references: [id])
+  ticketNumber     String      @unique
+  category         String
+  location         String
+  description      String      @db.Text
+  photos           Json        @default("[]")
+  status           IssueStatus @default(OPEN)
+  reportedBy       String
+  assignedTo       String?
+  completionReport String?
+  closedAt         DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  statusHistory    IssueStatusHistory[]
+  rfq              RFQ?
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+}
+
+model IssueStatusHistory {
+  id          String      @id @default(cuid())
+  issueId     String
+  issue       Issue       @relation(fields: [issueId], references: [id])
+  fromStatus  IssueStatus
+  toStatus    IssueStatus
+  notes       String?
+  changedBy   String
+  changedAt   DateTime    @default(now())
+}
+
+// ============================================================
+// SUPPLIERS
+// ============================================================
+
+model Supplier {
+  id                  String         @id @default(cuid())
+  uatId               String
+  uat                 UAT            @relation(fields: [uatId], references: [id])
+  userId              String?        @unique
+  user                User?          @relation(fields: [userId], references: [id])
+  companyName         String
+  fiscalCode          String         @unique
+  address             String?
+  email               String
+  phone               String?
+  serviceCategories   Json           @default("[]")
+  serviceAreas        Json           @default("[]")
+  qualificationDocs   Json           @default("[]")
+  status              SupplierStatus @default(PENDING)
+  verifiedBy          String?
+  verifiedAt          DateTime?
+  rejectionReason     String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  quotes              Quote[]
+}
+
+// ============================================================
+// RFQ (Request for Quotation)
+// ============================================================
+
+model RFQ {
+  id                String    @id @default(cuid())
+  associationId     String
+  association       Association @relation(fields: [associationId], references: [id])
+  issueId           String?   @unique
+  issue             Issue?    @relation(fields: [issueId], references: [id])
+  title             String
+  description       String    @db.Text
+  categories        Json      @default("[]")
+  estimatedValue    Float?
+  quotingDeadline   DateTime
+  status            RFQStatus @default(DRAFT)
+  currentVersion    Int       @default(1)
+  publishedBy       String
+  awardedSupplierId String?
+  awardedAt         DateTime?
+  awardReason       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  versions          RFQVersion[]
+  quotes            Quote[]
+  auditLogs         AuditLog[]
+}
+
+model RFQVersion {
+  id              String   @id @default(cuid())
+  rfqId           String
+  rfq             RFQ      @relation(fields: [rfqId], references: [id])
+  versionNumber   Int
+  snapshot        Json
+  changedBy       String
+  changeReason    String?
+  createdAt       DateTime @default(now())
+
+  @@unique([rfqId, versionNumber])
+}
+
+model Quote {
+  id          String      @id @default(cuid())
+  rfqId       String
+  rfq         RFQ         @relation(fields: [rfqId], references: [id])
+  supplierId  String
+  supplier    Supplier    @relation(fields: [supplierId], references: [id])
+  price       Float
+  leadDays    Int
+  description String?     @db.Text
+  documents   Json        @default("[]")
+  status      QuoteStatus @default(SUBMITTED)
+  submittedAt DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([rfqId, supplierId])
+}
+
+// ============================================================
+// AGM (Assembly General Meeting)
+// ============================================================
+
+model AGMSession {
+  id              String      @id @default(cuid())
+  associationId   String
+  association     Association @relation(fields: [associationId], references: [id])
+  scheduledAt     DateTime
+  location        String?
+  agenda          Json        @default("[]")
+  supportDocs     Json        @default("[]")
+  minutesUrl      String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  attendance      AGMAttendance[]
+  proxies         AGMProxy[]
+  resolutions     AGMResolution[]
+}
+
+model AGMAttendance {
+  id              String     @id @default(cuid())
+  sessionId       String
+  session         AGMSession @relation(fields: [sessionId], references: [id])
+  userId          String
+  shareRatio      Float?
+  attendanceType  String     @default("IN_PERSON") // IN_PERSON | ONLINE | PROXY
+  isPresent       Boolean    @default(true)
+  recordedAt      DateTime   @default(now())
+}
+
+model AGMProxy {
+  id          String     @id @default(cuid())
+  sessionId   String
+  session     AGMSession @relation(fields: [sessionId], references: [id])
+  principalId String     // user granting proxy
+  agentId     String     // user receiving proxy
+  scope       String?
+  proxyDocUrl String?
+  createdAt   DateTime   @default(now())
+}
+
+model AGMResolution {
+  id              String     @id @default(cuid())
+  sessionId       String
+  session         AGMSession @relation(fields: [sessionId], references: [id])
+  number          String
+  subject         String
+  archivedDocUrl  String     // offline-adopted document
+  archivedBy      String
+  archivedAt      DateTime   @default(now())
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+model Notification {
+  id              String              @id @default(cuid())
+  associationId   String?
+  association     Association?        @relation(fields: [associationId], references: [id])
+  recipientId     String
+  recipient       User                @relation(fields: [recipientId], references: [id])
+  issueId         String?
+  issue           Issue?              @relation(fields: [issueId], references: [id])
+  channel         NotificationChannel
+  status          NotificationStatus  @default(UNPROCESSED)
+  title           String
+  body            String              @db.Text
+  readAt          DateTime?
+  scheduledFor    DateTime            @default(now())
+  createdAt       DateTime            @default(now())
+
+  @@index([recipientId, status])
+}
+
+// ============================================================
+// AUDIT LOGS
+// ============================================================
+
+model AuditLog {
+  id              String      @id @default(cuid())
+  associationId   String?
+  association     Association? @relation(fields: [associationId], references: [id])
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+  role            UserRole
+  action          AuditAction
+  resource        String
+  resourceId      String?
+  metadata        Json        @default("{}")
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime    @default(now())
+
+  documentId      String?
+  document        Document?   @relation(fields: [documentId], references: [id])
+  consultationId  String?
+  consultation    Consultation? @relation(fields: [consultationId], references: [id])
+  issueId         String?
+  issue           Issue?      @relation(fields: [issueId], references: [id])
+  rfqId           String?
+  rfq             RFQ?        @relation(fields: [rfqId], references: [id])
+  certificateId   String?
+  certificate     Certificate? @relation(fields: [certificateId], references: [id])
+
+  @@index([associationId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model UATAuditLog {
+  id          String      @id @default(cuid())
+  uatId       String
+  uat         UAT         @relation(fields: [uatId], references: [id])
+  userId      String
+  user        User        @relation(fields: [userId], references: [id])
+  action      AuditAction
+  resource    String
+  resourceId  String?
+  metadata    Json        @default("{}")
+  ipAddress   String?
+  createdAt   DateTime    @default(now())
+
+  @@index([uatId, createdAt])
+}
