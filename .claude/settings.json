@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(xargs grep:*)",
+      "Bash(npm install:*)",
+      "Bash(xargs ls:*)",
+      "Bash(awk '{print $2}')",
+      "Bash(find src/app/\\\\\\(dashboard\\\\\\) -name \"page.tsx\" -exec echo {} \\\\;)",
+      "Bash(npx prisma:*)",
+      "Bash(set PRISMA_MIGRATE_SKIP_GENERATE=1)",
+      "Bash(taskkill /F /IM node.exe)",
+      "Bash(node -e \"const fs=require\\('fs'\\); const j=JSON.parse\\(fs.readFileSync\\('d:/Dropbox/Personale/01 Actiuni civice/Portal Asociatii Sector 1/bloc-uat-starter/messages/ro.json','utf8'\\)\\); console.log\\(JSON.stringify\\(j.financials||j.Financials||Object.keys\\(j\\),null,2\\)\\)\")",
+      "Bash(node -e \"const fs=require\\('fs'\\); const j=JSON.parse\\(fs.readFileSync\\('d:/Dropbox/Personale/01 Actiuni civice/Portal Asociatii Sector 1/bloc-uat-starter/messages/en.json','utf8'\\)\\); console.log\\(JSON.stringify\\(j.financials,null,2\\)\\)\")",
+      "Bash(mkdir -p \"d:/Dropbox/Personale/01 Actiuni civice/Portal Asociatii Sector 1/bloc-uat-starter/src/app/api/financiare/[id]/plata\")",
+      "Bash(mkdir -p \"d:/Dropbox/Personale/01 Actiuni civice/Portal Asociatii Sector 1/bloc-uat-starter/src/app/api/financiare/[id]/contoare\")",
+      "Bash(mkdir -p \"d:/Dropbox/Personale/01 Actiuni civice/Portal Asociatii Sector 1/bloc-uat-starter/src/app/api/financiare/[id]/archiva\")",
+      "Bash(node -e \"require\\('@anthropic-ai/sdk'\\); console.log\\('ok'\\)\")",
+      "WebSearch",
+      "Bash(node -e ':*)"
+    ],
+    "additionalDirectories": [
+      "d:\\Dropbox\\Personale\\01 Actiuni civice\\Portal Asociatii Sector 1\\bloc-uat-starter\\src\\app\\(dashboard)\\financiare",
+      "d:\\Dropbox\\Personale\\01 Actiuni civice\\Portal Asociatii Sector 1\\bloc-uat-starter\\src\\app\\api\\furnizori"
+    ]
+  }
+}

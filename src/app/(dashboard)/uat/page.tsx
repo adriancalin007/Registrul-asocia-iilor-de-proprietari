@@ -19,24 +19,36 @@ export default async function UATPage() {
 
   const [
     countActive, countPending, countUnderReview, countNeedsCompletion, countRejected,
-    countOwners, countVerifiedSuppliers, countPendingSuppliers,
-    countOpenIssues, countActiveConsultations,
+    countSuspended, countInactive,
+    countOwners, countPendingSuppliers,
+    countOpenSesizari,
     recentAssociations,
+    recentSesizari,
   ] = await Promise.all([
     prisma.association.count({ where: { status: "ACTIVE" } }),
     prisma.association.count({ where: { status: "PENDING" } }),
     prisma.association.count({ where: { status: "UNDER_REVIEW" } }),
     prisma.association.count({ where: { status: "NEEDS_COMPLETION" } }),
     prisma.association.count({ where: { status: "REJECTED" } }),
+    prisma.association.count({ where: { status: "SUSPENDED" } }),
+    prisma.association.count({ where: { status: "INACTIVE" } }),
     prisma.ownership.count({ where: { isActive: true } }),
-    prisma.supplier.count({ where: { status: "VERIFIED" } }),
     prisma.supplier.count({ where: { status: "PENDING" } }),
-    prisma.issue.count({ where: { status: "OPEN" } }),
-    prisma.consultation.count({ where: { status: "ACTIVE" } }),
+    prisma.sesizare.count({ where: { status: { in: ["OPEN", "IN_PROGRESS"] } } }),
     prisma.association.findMany({
       orderBy: { createdAt: "desc" },
       take: 5,
       select: { id: true, name: true, address: true, status: true, createdAt: true },
+    }),
+    prisma.sesizare.findMany({
+      where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+      select: {
+        id: true, title: true, category: true, routing: true, status: true, createdAt: true,
+        association: { select: { name: true } },
+        submitter:   { select: { fullName: true } },
+      },
     }),
   ]);
 
@@ -121,21 +133,18 @@ export default async function UATPage() {
           </div>
         </Link>
 
-        <div className="stat-card">
-          <div className="absolute top-0 left-0 w-1 h-full bg-red-400 rounded-l-xl" />
+        <Link href="/uat/sesizari" className="card-hover stat-card group">
+          <div className="absolute top-0 left-0 w-1 h-full bg-purple-500 rounded-l-xl" />
           <div className="pl-3">
-            <div className="w-9 h-9 rounded-xl bg-red-50 flex items-center justify-center mb-3">
-              <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63" />
+            <div className="w-9 h-9 rounded-xl bg-purple-50 flex items-center justify-center mb-3">
+              <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
               </svg>
             </div>
-            <p className="stat-card-value text-red-600">{countOpenIssues}</p>
-            <p className="stat-card-label">{t("uat.openIssues")}</p>
-            {countActiveConsultations > 0 && (
-              <p className="text-xs text-blue-600 mt-1">{countActiveConsultations} {t("uat.activeConsultations")}</p>
-            )}
+            <p className="stat-card-value text-purple-700">{countOpenSesizari}</p>
+            <p className="stat-card-label">Sesizări active</p>
           </div>
-        </div>
+        </Link>
       </div>
 
       {/* Nav cards */}
@@ -146,6 +155,8 @@ export default async function UATPage() {
           { href: "/uat/map", title: t("uat.mapTitle"), desc: t("uat.mapSubtitle"), icon: "🗺️", color: "bg-emerald-600",
             count: `${countActive} ${t("uat.activeAssociations").toLowerCase()}`, urgent: null },
           { href: "/uat/reports", title: t("uat.reportsTitle"), desc: t("uat.reportsSubtitle"), icon: "📊", color: "bg-purple-600",
+            count: null, urgent: null },
+          { href: "/uat/import", title: "Import from Excel", desc: "Bulk-create associations, buildings, units and owners from a spreadsheet", icon: "📥", color: "bg-teal-600",
             count: null, urgent: null },
           { href: "/uat/audit", title: t("uat.auditTitle"), desc: t("uat.auditSubtitle"), icon: "📋", color: "bg-slate-600",
             count: null, urgent: null },
@@ -179,24 +190,57 @@ export default async function UATPage() {
           <Link href="/uat/associations" className="text-sm text-uat-600 hover:text-uat-700 font-medium">{t("uat.viewAll")}</Link>
         </div>
         <div className="card-body">
-          <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
+          <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
             {[
-              { label: t("status.active"),          count: countActive,          dot: "bg-emerald-500" },
-              { label: t("status.pending"),          count: countPending,         dot: "bg-amber-500" },
-              { label: t("status.underReview"),      count: countUnderReview,     dot: "bg-blue-500" },
-              { label: t("status.needsCompletion"),  count: countNeedsCompletion, dot: "bg-orange-500" },
-              { label: t("status.rejected"),         count: countRejected,        dot: "bg-slate-400" },
-              { label: "Furnizori",                  count: countPendingSuppliers, dot: "bg-amber-500" },
+              { label: t("status.active"),          count: countActive,           dot: "bg-emerald-500", href: "/uat/associations?status=ACTIVE" },
+              { label: t("status.pending"),          count: countPending,          dot: "bg-amber-500",   href: "/uat/associations?status=PENDING" },
+              { label: t("status.underReview"),      count: countUnderReview,      dot: "bg-blue-500",    href: "/uat/associations?status=UNDER_REVIEW" },
+              { label: t("status.needsCompletion"),  count: countNeedsCompletion,  dot: "bg-orange-500",  href: "/uat/associations?status=NEEDS_COMPLETION" },
+              { label: t("status.rejected"),         count: countRejected,         dot: "bg-slate-400",   href: "/uat/associations?status=REJECTED" },
+              { label: t("status.suspended"),        count: countSuspended,        dot: "bg-red-500",     href: "/uat/associations?status=SUSPENDED" },
+              { label: t("status.inactive"),         count: countInactive,         dot: "bg-slate-300",   href: "/uat/associations?status=INACTIVE" },
+              { label: "Furnizori noi",              count: countPendingSuppliers, dot: "bg-amber-400",   href: "/uat/associations" },
             ].map(s => (
-              <div key={s.label} className={`flex flex-col items-center text-center p-3 rounded-xl ${s.count > 0 ? "bg-slate-50" : ""}`}>
+              <Link key={s.label} href={s.href}
+                className={`flex flex-col items-center text-center p-3 rounded-xl transition-colors hover:bg-slate-100 ${s.count > 0 ? "bg-slate-50" : ""}`}>
                 <div className={`w-2 h-2 rounded-full ${s.dot} mb-2`} />
-                <p className="text-2xl font-bold text-slate-900">{s.count}</p>
+                <p className={`text-2xl font-bold ${s.count > 0 ? "text-slate-900" : "text-slate-300"}`}>{s.count}</p>
                 <p className="text-xs text-slate-500 mt-0.5 leading-tight">{s.label}</p>
-              </div>
+              </Link>
             ))}
           </div>
         </div>
       </div>
+
+      {/* Sesizări recente */}
+      {recentSesizari.length > 0 && (
+        <div className="card">
+          <div className="card-header flex items-center justify-between">
+            <h2 className="font-semibold text-slate-900">Sesizări active</h2>
+            <Link href="/uat/sesizari" className="text-sm text-uat-600 hover:text-uat-700 font-medium">Vezi toate</Link>
+          </div>
+          <div className="divide-y divide-slate-50">
+            {recentSesizari.map(s => (
+              <Link key={s.id} href="/uat/sesizari"
+                className="flex items-center gap-4 px-6 py-3 hover:bg-slate-50/80 transition-colors group">
+                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${s.routing === "POLICE" ? "bg-purple-400" : "bg-blue-400"}`} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-900 truncate group-hover:text-uat-700 transition-colors">{s.title}</p>
+                  <p className="text-xs text-slate-400 truncate">{s.association.name} · {s.category}</p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.status === "OPEN" ? "bg-yellow-100 text-yellow-800" : "bg-blue-100 text-blue-800"}`}>
+                    {s.status === "OPEN" ? "Deschisă" : "În curs"}
+                  </span>
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${s.routing === "POLICE" ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-600"}`}>
+                    {s.routing === "POLICE" ? "Poliție" : "Adm. S1"}
+                  </span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Recent */}
       <div className="card">

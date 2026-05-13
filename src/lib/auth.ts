@@ -72,6 +72,12 @@ export const authConfig: NextAuthConfig = {
         token.userId = user.id;
         token.role = roleInfo.role;
         token.uatId = roleInfo.uatId;
+        const dbUser = await prisma.user.findUnique({
+          where: { id: user.id },
+          select: { civicType: true, mustChangePassword: true },
+        });
+        token.civicType = dbUser?.civicType ?? "NEIDENTIFICAT";
+        token.mustChangePassword = dbUser?.mustChangePassword ?? false;
       }
       return token;
     },
@@ -80,6 +86,8 @@ export const authConfig: NextAuthConfig = {
         session.user.id = token.userId as string;
         session.user.role = token.role as string;
         session.user.uatId = token.uatId as string | undefined;
+        session.user.civicType = token.civicType as string | undefined;
+        session.user.mustChangePassword = token.mustChangePassword as boolean | undefined;
       }
       return session;
     },

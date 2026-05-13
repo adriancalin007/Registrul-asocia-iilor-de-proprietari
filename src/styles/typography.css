@@ -1,0 +1,66 @@
+/* ─────────────────────────────────────────────
+   Bloc-UAT Typography Utilities
+   Semantic classes beyond what Tailwind covers.
+   Requires design-tokens.css to be loaded first.
+───────────────────────────────────────────── */
+
+/* Kicker / section label above a heading
+   Usage: <p class="kicker">Conformitate</p>
+   ---------------------------------------- */
+.kicker {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;   /* 11px */
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--coral);
+  line-height: 1.4;
+}
+
+/* Section heading on public pages
+   Usage: <h2 class="section-title">...</h2>
+   ----------------------------------------- */
+.section-title {
+  font-family: var(--font-sans);
+  font-size: 1.375rem;    /* 22px */
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  color: var(--ink-1);
+}
+
+/* Large italic number stat (Newsreader)
+   Only on public-facing pages — dashboard uses
+   .stat-card-value instead.
+   Usage: <span class="stat-number">1 234</span>
+   --------------------------------------------- */
+.stat-number {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 2.5rem;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--ink-1);
+}
+
+/* Eyebrow — subtler than kicker, no color
+   Usage: <span class="eyebrow">Sector 1</span>
+   --------------------------------------------- */
+.eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  line-height: 1.4;
+}
+
+/* Body text large (public pages intro paragraphs)
+   Usage: <p class="body-lg">...</p>
+   ----------------------------------------- */
+.body-lg {
+  font-size: 1.0625rem;   /* 17px */
+  line-height: 1.65;
+  color: var(--ink-2);
+}

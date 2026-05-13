@@ -45,6 +45,18 @@ function emptyMember(): CommitteeMember {
   return { id: genId(), role:"", firstName:"", lastName:"", phone:"", email:"", idFile: null };
 }
 
+function OcrSpinner({ label = "Se analizează documentul..." }: { label?: string }) {
+  return (
+    <p className="text-xs text-uat-600 flex items-center gap-1.5 mt-1.5">
+      <svg className="animate-spin h-3 w-3 flex-shrink-0" fill="none" viewBox="0 0 24 24">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+      </svg>
+      {label}
+    </p>
+  );
+}
+
 export default function RegisterAssociationPage() {
   const [step, setStep] = useState(1);
   const [isPending, startTransition] = useTransition();
@@ -63,20 +75,96 @@ export default function RegisterAssociationPage() {
     gdprConsent: false,
   });
 
+  // OCR state
+  const [scanCui, setScanCui] = useState<UploadResult | null>(null);
+  const [scanPresidentCi, setScanPresidentCi] = useState<UploadResult | null>(null);
+  const [ocrLoading, setOcrLoading] = useState<Set<string>>(new Set());
+  const [autoFilled, setAutoFilled] = useState<Set<string>>(new Set());
+
   function upd(k: keyof Omit<FormData,"committeeMembers"|"docStatute"|"docCourtReg"|"docPresidentMandate"|"docPresidentId">, v: string|boolean) {
-    setForm(p => ({ ...p, [k]: v })); setErrors(p => ({ ...p, [k]: "" }));
+    setForm(p => ({ ...p, [k]: v }));
+    setErrors(p => ({ ...p, [k]: "" }));
+    setAutoFilled(p => { const s = new Set(p); s.delete(k as string); return s; });
   }
   function updDoc(k: "docStatute"|"docCourtReg"|"docPresidentMandate"|"docPresidentId", v: UploadResult|null) {
     setForm(p => ({ ...p, [k]: v })); setErrors(p => ({ ...p, [k]: "" }));
   }
   function updMember(i: number, k: keyof Omit<CommitteeMember,"idFile">, v: string) {
     setForm(p => { const m=[...p.committeeMembers]; m[i]={...m[i],[k]:v}; return {...p,committeeMembers:m}; });
+    setAutoFilled(p => { const s = new Set(p); s.delete(`cm_${i}_${k}`); return s; });
   }
   function updMemberFile(i: number, v: UploadResult|null) {
     setForm(p => { const m=[...p.committeeMembers]; m[i]={...m[i],idFile:v}; return {...p,committeeMembers:m}; });
   }
   function addMember() { if (form.committeeMembers.length<6) setForm(p=>({...p,committeeMembers:[...p.committeeMembers,emptyMember()]})); }
   function removeMember(i: number) { if (form.committeeMembers.length>2) setForm(p=>({...p,committeeMembers:p.committeeMembers.filter((_,j)=>j!==i)})); }
+
+  async function runOcr(url: string, mimeType: string, docType: string, memberIndex?: number, loadingKey?: string) {
+    const key = loadingKey ?? (memberIndex !== undefined ? `memberCI_${memberIndex}` : docType);
+    setOcrLoading(prev => { const s = new Set(prev); s.add(key); return s; });
+    try {
+      const res = await fetch("/api/ocr/asociatie", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, mimeType, docType, memberIndex }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.fields && Object.keys(data.fields).length > 0) {
+        applyFields(data.fields, memberIndex);
+      }
+    } catch {
+      // Silently fail — user can complete manually
+    } finally {
+      setOcrLoading(prev => { const s = new Set(prev); s.delete(key); return s; });
+    }
+  }
+
+  function applyFields(fields: Record<string, string>, memberIndex?: number) {
+    if (memberIndex !== undefined) {
+      setForm(prev => {
+        const members = [...prev.committeeMembers];
+        const m = { ...members[memberIndex] };
+        if (fields.lastName && !m.lastName) m.lastName = fields.lastName;
+        if (fields.firstName && !m.firstName) m.firstName = fields.firstName;
+        members[memberIndex] = m;
+        return { ...prev, committeeMembers: members };
+      });
+      setAutoFilled(prev => {
+        const s = new Set(prev);
+        if (fields.lastName) s.add(`cm_${memberIndex}_lastName`);
+        if (fields.firstName) s.add(`cm_${memberIndex}_firstName`);
+        return s;
+      });
+      return;
+    }
+    setForm(prev => {
+      const u: Partial<FormData> = {};
+      if (fields.name && !prev.name) u.name = fields.name;
+      if (fields.fiscalCode && !prev.fiscalCode) u.fiscalCode = fields.fiscalCode;
+      if (fields.address && !prev.address) u.address = fields.address;
+      if (fields.unitCount && !prev.unitCount) u.unitCount = fields.unitCount;
+      if (fields.staircaseCount && !prev.staircaseCount) u.staircaseCount = fields.staircaseCount;
+      if (fields.presidentLastName && !prev.presidentLastName) u.presidentLastName = fields.presidentLastName;
+      if (fields.presidentFirstName && !prev.presidentFirstName) u.presidentFirstName = fields.presidentFirstName;
+      if (fields.presidentPhone && !prev.presidentPhone) u.presidentPhone = fields.presidentPhone;
+      if (fields.presidentEmail && !prev.presidentEmail) u.presidentEmail = fields.presidentEmail;
+      return { ...prev, ...u };
+    });
+    setAutoFilled(prev => {
+      const s = new Set(prev);
+      if (fields.name) s.add("name");
+      if (fields.fiscalCode) s.add("fiscalCode");
+      if (fields.address) s.add("address");
+      if (fields.unitCount) s.add("unitCount");
+      if (fields.staircaseCount) s.add("staircaseCount");
+      if (fields.presidentLastName) s.add("presidentLastName");
+      if (fields.presidentFirstName) s.add("presidentFirstName");
+      if (fields.presidentPhone) s.add("presidentPhone");
+      if (fields.presidentEmail) s.add("presidentEmail");
+      return s;
+    });
+  }
 
   function validate1() {
     const e: Record<string,string>={};
@@ -203,21 +291,52 @@ export default function RegisterAssociationPage() {
           {step===1 && (
             <div className="p-8 space-y-5">
               <h2 className="text-xl font-semibold text-slate-900">Date asociație</h2>
+
+              {/* OCR scan zone — CUI / Certificat Fiscal */}
+              <div className="border-2 border-dashed border-uat-200 rounded-2xl p-4 bg-uat-50/40 space-y-2">
+                <p className="text-xs font-semibold text-uat-700 flex items-center gap-1.5">
+                  ✨ Completare automată din document
+                </p>
+                <p className="text-xs text-slate-500">
+                  Încarcă o copie după CUI sau Certificat de Înregistrare și câmpurile se completează automat.
+                </p>
+                <FileUpload
+                  associationId={tempId}
+                  category="registration"
+                  label="Scanează CUI / Certificat de Înregistrare (opțional)"
+                  value={scanCui}
+                  onChange={async v => {
+                    setScanCui(v);
+                    if (v) await runOcr(v.url, v.type, "cui");
+                  }}
+                />
+                {ocrLoading.has("cui") && <OcrSpinner />}
+              </div>
+
               <div>
-                <label className="label">Denumire completă <span className="text-red-500">*</span></label>
+                <label className="label">
+                  Denumire completă <span className="text-red-500">*</span>
+                  {autoFilled.has("name") && <span className="ml-1.5 text-xs bg-uat-100 text-uat-700 px-1.5 py-0.5 rounded font-medium">✨ auto</span>}
+                </label>
                 <input type="text" value={form.name} onChange={e=>upd("name",e.target.value)}
                   placeholder="ex: Asociația de Proprietari Nr. 123 Sector 1"
                   className={`input ${errors.name?"border-red-400":""}`}/>
                 {errors.name&&<p className="text-red-500 text-xs mt-1">⚠ {errors.name}</p>}
               </div>
               <div>
-                <label className="label">Cod fiscal (CIF) <span className="text-red-500">*</span></label>
+                <label className="label">
+                  Cod fiscal (CIF) <span className="text-red-500">*</span>
+                  {autoFilled.has("fiscalCode") && <span className="ml-1.5 text-xs bg-uat-100 text-uat-700 px-1.5 py-0.5 rounded font-medium">✨ auto</span>}
+                </label>
                 <input type="text" value={form.fiscalCode} onChange={e=>upd("fiscalCode",e.target.value)}
                   placeholder="ex: 12345678" className={`input ${errors.fiscalCode?"border-red-400":""}`}/>
                 {errors.fiscalCode&&<p className="text-red-500 text-xs mt-1">⚠ {errors.fiscalCode}</p>}
               </div>
               <div>
-                <label className="label">Adresa sediului <span className="text-red-500">*</span></label>
+                <label className="label">
+                  Adresa sediului <span className="text-red-500">*</span>
+                  {autoFilled.has("address") && <span className="ml-1.5 text-xs bg-uat-100 text-uat-700 px-1.5 py-0.5 rounded font-medium">✨ auto</span>}
+                </label>
                 <StreetAutocomplete
                   value={form.address}
                   onChange={v => { upd("address", v); }}
@@ -241,12 +360,18 @@ export default function RegisterAssociationPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="label">Număr scări</label>
+                  <label className="label">
+                    Număr scări
+                    {autoFilled.has("staircaseCount") && <span className="ml-1.5 text-xs bg-uat-100 text-uat-700 px-1.5 py-0.5 rounded font-medium">✨ auto</span>}
+                  </label>
                   <input type="number" min="1" value={form.staircaseCount}
                     onChange={e=>upd("staircaseCount",e.target.value)} className="input"/>
                 </div>
                 <div>
-                  <label className="label">Număr apartamente <span className="text-red-500">*</span></label>
+                  <label className="label">
+                    Număr apartamente <span className="text-red-500">*</span>
+                    {autoFilled.has("unitCount") && <span className="ml-1.5 text-xs bg-uat-100 text-uat-700 px-1.5 py-0.5 rounded font-medium">✨ auto</span>}
+                  </label>
                   <input type="number" min="1" value={form.unitCount}
                     onChange={e=>upd("unitCount",e.target.value)} placeholder="ex: 48"
                     className={`input ${errors.unitCount?"border-red-400":""}`}/>
@@ -264,28 +389,62 @@ export default function RegisterAssociationPage() {
             <div className="p-8 space-y-5">
               <h2 className="text-xl font-semibold text-slate-900">Președinte Comitet Executiv</h2>
               <p className="text-sm text-slate-500">Persoana care reprezintă legal asociația și va primi comunicările UAT.</p>
+
+              {/* OCR scan zone — CI Președinte */}
+              <div className="border-2 border-dashed border-uat-200 rounded-2xl p-4 bg-uat-50/40 space-y-2">
+                <p className="text-xs font-semibold text-uat-700 flex items-center gap-1.5">
+                  ✨ Completare automată din CI
+                </p>
+                <p className="text-xs text-slate-500">
+                  Încarcă o copie după CI Președinte pentru completare automată a numelui.
+                </p>
+                <FileUpload
+                  associationId={tempId}
+                  category="committee"
+                  label="Scanează CI Președinte (opțional)"
+                  value={scanPresidentCi}
+                  onChange={async v => {
+                    setScanPresidentCi(v);
+                    if (v) await runOcr(v.url, v.type, "presidentId", undefined, "presidentIdScan");
+                  }}
+                />
+                {ocrLoading.has("presidentIdScan") && <OcrSpinner label="Se analizează CI..." />}
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="label">Nume <span className="text-red-500">*</span></label>
+                  <label className="label">
+                    Nume <span className="text-red-500">*</span>
+                    {autoFilled.has("presidentLastName") && <span className="ml-1.5 text-xs bg-uat-100 text-uat-700 px-1.5 py-0.5 rounded font-medium">✨ auto</span>}
+                  </label>
                   <input type="text" value={form.presidentLastName} onChange={e=>upd("presidentLastName",e.target.value)}
                     placeholder="Popescu" className={`input ${errors.presidentLastName?"border-red-400":""}`}/>
                   {errors.presidentLastName&&<p className="text-red-500 text-xs mt-1">⚠ {errors.presidentLastName}</p>}
                 </div>
                 <div>
-                  <label className="label">Prenume <span className="text-red-500">*</span></label>
+                  <label className="label">
+                    Prenume <span className="text-red-500">*</span>
+                    {autoFilled.has("presidentFirstName") && <span className="ml-1.5 text-xs bg-uat-100 text-uat-700 px-1.5 py-0.5 rounded font-medium">✨ auto</span>}
+                  </label>
                   <input type="text" value={form.presidentFirstName} onChange={e=>upd("presidentFirstName",e.target.value)}
                     placeholder="Ion" className={`input ${errors.presidentFirstName?"border-red-400":""}`}/>
                   {errors.presidentFirstName&&<p className="text-red-500 text-xs mt-1">⚠ {errors.presidentFirstName}</p>}
                 </div>
               </div>
               <div>
-                <label className="label">Adresă email <span className="text-red-500">*</span></label>
+                <label className="label">
+                  Adresă email <span className="text-red-500">*</span>
+                  {autoFilled.has("presidentEmail") && <span className="ml-1.5 text-xs bg-uat-100 text-uat-700 px-1.5 py-0.5 rounded font-medium">✨ auto</span>}
+                </label>
                 <input type="email" value={form.presidentEmail} onChange={e=>upd("presidentEmail",e.target.value)}
                   placeholder="ion.popescu@email.ro" className={`input ${errors.presidentEmail?"border-red-400":""}`}/>
                 {errors.presidentEmail&&<p className="text-red-500 text-xs mt-1">⚠ {errors.presidentEmail}</p>}
               </div>
               <div>
-                <label className="label">Telefon <span className="text-red-500">*</span></label>
+                <label className="label">
+                  Telefon <span className="text-red-500">*</span>
+                  {autoFilled.has("presidentPhone") && <span className="ml-1.5 text-xs bg-uat-100 text-uat-700 px-1.5 py-0.5 rounded font-medium">✨ auto</span>}
+                </label>
                 <input type="tel" value={form.presidentPhone} onChange={e=>upd("presidentPhone",e.target.value)}
                   placeholder="0721 000 000" className={`input ${errors.presidentPhone?"border-red-400":""}`}/>
                 {errors.presidentPhone&&<p className="text-red-500 text-xs mt-1">⚠ {errors.presidentPhone}</p>}
@@ -308,42 +467,66 @@ export default function RegisterAssociationPage() {
                   <span className="w-5 h-5 rounded-full bg-uat-600 text-white text-xs flex items-center justify-center">1</span>
                   Acte obligatorii
                 </h3>
-                <FileUpload
-                  associationId={tempId}
-                  category="registration"
-                  label="Statut asociație"
-                  required
-                  value={form.docStatute}
-                  onChange={v => updDoc("docStatute", v)}
-                  error={errors.docStatute}
-                />
-                <FileUpload
-                  associationId={tempId}
-                  category="registration"
-                  label="Dovadă înregistrare judecătorie"
-                  required
-                  value={form.docCourtReg}
-                  onChange={v => updDoc("docCourtReg", v)}
-                  error={errors.docCourtReg}
-                />
-                <FileUpload
-                  associationId={tempId}
-                  category="registration"
-                  label="Contract de mandat Președinte CA"
-                  required
-                  value={form.docPresidentMandate}
-                  onChange={v => updDoc("docPresidentMandate", v)}
-                  error={errors.docPresidentMandate}
-                />
-                <FileUpload
-                  associationId={tempId}
-                  category="committee"
-                  label="Copie CI Președinte CA"
-                  required
-                  value={form.docPresidentId}
-                  onChange={v => updDoc("docPresidentId", v)}
-                  error={errors.docPresidentId}
-                />
+                <div>
+                  <FileUpload
+                    associationId={tempId}
+                    category="registration"
+                    label="Statut asociație"
+                    required
+                    value={form.docStatute}
+                    onChange={async v => {
+                      updDoc("docStatute", v);
+                      if (v) await runOcr(v.url, v.type, "statute");
+                    }}
+                    error={errors.docStatute}
+                  />
+                  {ocrLoading.has("statute") && <OcrSpinner />}
+                </div>
+                <div>
+                  <FileUpload
+                    associationId={tempId}
+                    category="registration"
+                    label="Dovadă înregistrare judecătorie"
+                    required
+                    value={form.docCourtReg}
+                    onChange={async v => {
+                      updDoc("docCourtReg", v);
+                      if (v) await runOcr(v.url, v.type, "courtReg");
+                    }}
+                    error={errors.docCourtReg}
+                  />
+                  {ocrLoading.has("courtReg") && <OcrSpinner />}
+                </div>
+                <div>
+                  <FileUpload
+                    associationId={tempId}
+                    category="registration"
+                    label="Contract de mandat Președinte CA"
+                    required
+                    value={form.docPresidentMandate}
+                    onChange={async v => {
+                      updDoc("docPresidentMandate", v);
+                      if (v) await runOcr(v.url, v.type, "presidentMandate");
+                    }}
+                    error={errors.docPresidentMandate}
+                  />
+                  {ocrLoading.has("presidentMandate") && <OcrSpinner />}
+                </div>
+                <div>
+                  <FileUpload
+                    associationId={tempId}
+                    category="committee"
+                    label="Copie CI Președinte CA"
+                    required
+                    value={form.docPresidentId}
+                    onChange={async v => {
+                      updDoc("docPresidentId", v);
+                      if (v) await runOcr(v.url, v.type, "presidentId");
+                    }}
+                    error={errors.docPresidentId}
+                  />
+                  {ocrLoading.has("presidentId") && <OcrSpinner />}
+                </div>
               </div>
 
               {/* Committee members */}
@@ -381,12 +564,18 @@ export default function RegisterAssociationPage() {
                         {errors[`cm_${i}_role`]&&<p className="text-red-500 text-xs mt-1">⚠</p>}
                       </div>
                       <div>
-                        <label className="label text-xs">Nume <span className="text-red-500">*</span></label>
+                        <label className="label text-xs">
+                          Nume <span className="text-red-500">*</span>
+                          {autoFilled.has(`cm_${i}_lastName`) && <span className="ml-1 text-xs bg-uat-100 text-uat-700 px-1 py-0.5 rounded font-medium">✨</span>}
+                        </label>
                         <input type="text" value={m.lastName} onChange={e=>updMember(i,"lastName",e.target.value)}
                           placeholder="Popescu" className={`input text-sm ${errors[`cm_${i}_lastName`]?"border-red-400":""}`}/>
                       </div>
                       <div>
-                        <label className="label text-xs">Prenume <span className="text-red-500">*</span></label>
+                        <label className="label text-xs">
+                          Prenume <span className="text-red-500">*</span>
+                          {autoFilled.has(`cm_${i}_firstName`) && <span className="ml-1 text-xs bg-uat-100 text-uat-700 px-1 py-0.5 rounded font-medium">✨</span>}
+                        </label>
                         <input type="text" value={m.firstName} onChange={e=>updMember(i,"firstName",e.target.value)}
                           placeholder="Ion" className={`input text-sm ${errors[`cm_${i}_firstName`]?"border-red-400":""}`}/>
                       </div>
@@ -401,15 +590,21 @@ export default function RegisterAssociationPage() {
                         <input type="email" value={m.email} onChange={e=>updMember(i,"email",e.target.value)} className="input text-sm"/>
                       </div>
                     </div>
-                    <FileUpload
-                      associationId={tempId}
-                      category="committee"
-                      label="Copie CI"
-                      required
-                      value={m.idFile}
-                      onChange={v => updMemberFile(i, v)}
-                      error={errors[`cm_${i}_idFile`]}
-                    />
+                    <div>
+                      <FileUpload
+                        associationId={tempId}
+                        category="committee"
+                        label="Copie CI"
+                        required
+                        value={m.idFile}
+                        onChange={async v => {
+                          updMemberFile(i, v);
+                          if (v) await runOcr(v.url, v.type, "memberCI", i);
+                        }}
+                        error={errors[`cm_${i}_idFile`]}
+                      />
+                      {ocrLoading.has(`memberCI_${i}`) && <OcrSpinner label="Se extrage numele din CI..." />}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -463,7 +658,7 @@ export default function RegisterAssociationPage() {
                     Comitet executiv ({form.committeeMembers.length} membri)
                   </p>
                   <div className="space-y-1">
-                    {form.committeeMembers.map((m,i)=>(
+                    {form.committeeMembers.map((m)=>(
                       <div key={m.id} className="flex items-center gap-2 text-sm">
                         <span className="text-green-500">✓</span>
                         <span className="font-medium">{m.lastName} {m.firstName}</span>

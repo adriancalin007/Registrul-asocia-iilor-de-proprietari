@@ -1,0 +1,833 @@
+"use client";
+import { useEffect, useState } from "react";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+type HeatingType = "DISTRICT" | "CENTRALIZED" | "INDIVIDUAL" | "NONE";
+const HEATING_LABELS: Record<HeatingType, string> = {
+  DISTRICT:    "Termoficare oraș",
+  CENTRALIZED: "Centrală bloc",
+  INDIVIDUAL:  "Centrală proprie",
+  NONE:        "—",
+};
+
+type Unit = {
+  id: string; number: string; floor: number | null; area: number | null;
+  shareRatio: number | null; residents: number | null;
+  heatingType: HeatingType;
+  isCompanyHQ: boolean; companyName: string | null; companyCUI: string | null;
+  _count: { ownerships: number };
+  ownerships: { id: string; type: string; user: { fullName: string } }[];
+};
+type Building = { id: string; name: string; address: string; units: Unit[] };
+
+type Ownership = {
+  id: string; type: string; isActive: boolean; startDate: string;
+  user: { id: string; fullName: string; email: string; phone: string | null };
+  unit: { number: string; floor: number | null; building: { name: string } };
+};
+
+type Resident = {
+  id: string; fullName: string; cnp: string | null; type: string;
+  startDate: string; endDate: string | null; isActive: boolean; notes: string | null;
+  unit: { number: string; floor: number | null; building: { name: string } };
+};
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const RESIDENT_TYPES: Record<string, string> = {
+  OWNER: "Proprietar", CO_OWNER: "Coproprietar", TENANT: "Chiriaș",
+  FAMILY_MEMBER: "Membru familie", MINOR: "Minor", CARETAKER: "Îngrijitor",
+  EMPLOYEE: "Angajat firmă", OTHER: "Altul",
+};
+const OWNERSHIP_TYPES: Record<string, string> = {
+  OWNER: "Proprietar", TENANT: "Chiriaș", CO_OWNER: "Coproprietar",
+};
+
+function Btn({ children, onClick, disabled, variant = "primary" }: {
+  children: React.ReactNode; onClick?: () => void; disabled?: boolean;
+  variant?: "primary" | "ghost" | "danger";
+}) {
+  const cls = {
+    primary: "bg-uat-600 text-white hover:bg-uat-700",
+    ghost:   "border border-slate-200 text-slate-600 hover:bg-slate-50",
+    danger:  "text-red-500 hover:text-red-700",
+  }[variant];
+  return (
+    <button onClick={onClick} disabled={disabled}
+      className={`text-sm font-medium px-3 py-1.5 rounded-lg disabled:opacity-40 transition-colors ${cls}`}>
+      {children}
+    </button>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+export default function ProprietariClient() {
+  const [tab, setTab] = useState<"apartamente" | "proprietari" | "cartea">("apartamente");
+
+  // ── Apartamente state ──
+  const [buildings, setBuildings] = useState<Building[]>([]);
+  const [loadingApt, setLoadingApt] = useState(true);
+  const [showAptModal, setShowAptModal] = useState(false);
+  const [editUnit, setEditUnit] = useState<Unit | null>(null);
+  const [aptForm, setAptForm] = useState({ buildingId: "", number: "", floor: "", area: "", shareRatio: "", residents: "", heatingType: "NONE" as HeatingType, isCompanyHQ: false, companyName: "", companyCUI: "" });
+  const [aptSaving, setAptSaving] = useState(false);
+  const [aptError, setAptError] = useState<string | null>(null);
+
+  // ── Clădiri (scări/corpuri) state ──
+  const [showBuildingModal, setShowBuildingModal] = useState(false);
+  const [buildingForm, setBuildingForm] = useState({ name: "", address: "" });
+  const [buildingSaving, setBuildingSaving] = useState(false);
+  const [buildingError, setBuildingError] = useState<string | null>(null);
+
+  // ── Proprietari state ──
+  const [ownerships, setOwnerships] = useState<Ownership[]>([]);
+  const [loadingOwn, setLoadingOwn] = useState(false);
+  const [showOwnModal, setShowOwnModal] = useState(false);
+  const [ownForm, setOwnForm] = useState({
+    buildingId: "", unitId: "", fullName: "", cnp: "", email: "", phone: "",
+    ownerType: "OWNER" as "OWNER"|"CO_OWNER", startDate: new Date().toISOString().slice(0,10),
+  });
+  const [ownSaving, setOwnSaving] = useState(false);
+  const [ownError, setOwnError] = useState<string | null>(null);
+  const [unitsByBuilding, setUnitsByBuilding] = useState<Unit[]>([]);
+
+  // ── Owner edit state ──
+  const [editOwnership, setEditOwnership] = useState<Ownership | null>(null);
+  const [editOwnForm, setEditOwnForm] = useState({ fullName: "", email: "", phone: "", cnp: "" });
+  const [editOwnSaving, setEditOwnSaving] = useState(false);
+  const [editOwnError, setEditOwnError] = useState<string | null>(null);
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteMsg, setInviteMsg] = useState<string | null>(null);
+  const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+
+  // ── Cartea imobilului state ──
+  const [residents, setResidents] = useState<Resident[]>([]);
+  const [loadingRes, setLoadingRes] = useState(false);
+  const [showResModal, setShowResModal] = useState(false);
+  const [resForm, setResForm] = useState({
+    unitId: "", fullName: "", cnp: "", type: "OWNER",
+    startDate: new Date().toISOString().slice(0,10), notes: "",
+  });
+  const [resSaving, setResSaving] = useState(false);
+  const [resError, setResError] = useState<string | null>(null);
+  const [allUnits, setAllUnits] = useState<{id:string;number:string;buildingName:string}[]>([]);
+
+  // ─── Loaders ─────────────────────────────────────────────────────────────────
+
+  async function loadBuildings() {
+    setLoadingApt(true);
+    const res = await fetch("/api/apartamente");
+    if (res.ok) {
+      const data: Building[] = await res.json();
+      setBuildings(data);
+      const units = data.flatMap(b => b.units.map(u => ({ id: u.id, number: u.number, buildingName: b.name })));
+      setAllUnits(units);
+      if (data.length && !ownForm.buildingId) setOwnForm(f => ({ ...f, buildingId: data[0].id }));
+    }
+    setLoadingApt(false);
+  }
+
+  async function loadOwnerships() {
+    setLoadingOwn(true);
+    const res = await fetch("/api/proprietari");
+    if (res.ok) setOwnerships(await res.json());
+    setLoadingOwn(false);
+  }
+
+  async function loadResidents() {
+    setLoadingRes(true);
+    const res = await fetch("/api/cartea-imobilului");
+    if (res.ok) setResidents(await res.json());
+    setLoadingRes(false);
+  }
+
+  useEffect(() => { loadBuildings(); }, []);
+  useEffect(() => { if (tab === "proprietari" && ownerships.length === 0) loadOwnerships(); }, [tab]);
+  useEffect(() => { if (tab === "cartea" && residents.length === 0) loadResidents(); }, [tab]);
+
+  // ─── Buildings ───────────────────────────────────────────────────────────────
+
+  async function saveBuilding() {
+    setBuildingSaving(true); setBuildingError(null);
+    const res = await fetch("/api/cladiri", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildingForm),
+    });
+    const data = await res.json();
+    if (!res.ok) { setBuildingError(data.error); setBuildingSaving(false); return; }
+    setShowBuildingModal(false);
+    setBuildingForm({ name: "", address: "" });
+    await loadBuildings();
+    setBuildingSaving(false);
+  }
+
+  // ─── Apartments ──────────────────────────────────────────────────────────────
+
+  async function saveApartment() {
+    setAptSaving(true); setAptError(null);
+    if (editUnit) {
+      const res = await fetch(`/api/apartamente/${editUnit.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          number:     aptForm.number     || undefined,
+          floor:       aptForm.floor      !== "" ? parseInt(aptForm.floor)        : null,
+          area:        aptForm.area       !== "" ? parseFloat(aptForm.area)       : null,
+          shareRatio:  aptForm.shareRatio !== "" ? parseFloat(aptForm.shareRatio) : null,
+          residents:   aptForm.residents  !== "" ? parseInt(aptForm.residents)    : null,
+          heatingType: aptForm.heatingType,
+        }),
+      });
+      if (!res.ok) { setAptError((await res.json()).error); setAptSaving(false); return; }
+    } else {
+      const res = await fetch("/api/apartamente", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          buildingId:  aptForm.buildingId,
+          number:      aptForm.number,
+          floor:       aptForm.floor      ? parseInt(aptForm.floor)        : undefined,
+          area:        aptForm.area       ? parseFloat(aptForm.area)       : undefined,
+          shareRatio:  aptForm.shareRatio ? parseFloat(aptForm.shareRatio) : undefined,
+          residents:   aptForm.residents  ? parseInt(aptForm.residents)    : undefined,
+          heatingType: aptForm.heatingType !== "NONE" ? aptForm.heatingType : undefined,
+        }),
+      });
+      if (!res.ok) { setAptError((await res.json()).error); setAptSaving(false); return; }
+    }
+    setShowAptModal(false); setEditUnit(null);
+    setAptForm({ buildingId: buildings[0]?.id ?? "", number: "", floor: "", area: "", shareRatio: "", residents: "", heatingType: "NONE", isCompanyHQ: false, companyName: "", companyCUI: "" });
+    await loadBuildings(); setAptSaving(false);
+  }
+
+  // ─── Owners ──────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const b = buildings.find(b => b.id === ownForm.buildingId);
+    setUnitsByBuilding(b?.units ?? []);
+    if (b?.units.length) setOwnForm(f => ({ ...f, unitId: b.units[0].id }));
+  }, [ownForm.buildingId, buildings]);
+
+  async function saveOwner() {
+    setOwnSaving(true); setOwnError(null);
+    const res = await fetch("/api/proprietari", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        buildingId: ownForm.buildingId,
+        unitNumber: unitsByBuilding.find(u => u.id === ownForm.unitId)?.number ?? "",
+        fullName:   ownForm.fullName,
+        cnp:        ownForm.cnp  || undefined,
+        email:      ownForm.email,
+        phone:      ownForm.phone,
+        ownerType:  ownForm.ownerType,
+        startDate:  ownForm.startDate,
+      }),
+    });
+    if (!res.ok) { setOwnError((await res.json()).error); setOwnSaving(false); return; }
+    setShowOwnModal(false);
+    setOwnForm(f => ({ ...f, fullName: "", cnp: "", email: "", phone: "" }));
+    await loadOwnerships(); setOwnSaving(false);
+  }
+
+  function openEditOwner(o: Ownership) {
+    setEditOwnership(o);
+    setEditOwnForm({
+      fullName: o.user.fullName,
+      email:    o.user.email.includes("noemail+") ? "" : o.user.email,
+      phone:    o.user.phone ?? "",
+      cnp:      "",
+    });
+    setEditOwnError(null);
+    setInviteMsg(null);
+    setInviteUrl(null);
+  }
+
+  async function saveEditOwner() {
+    if (!editOwnership) return;
+    setEditOwnSaving(true); setEditOwnError(null);
+    const res = await fetch(`/api/proprietari/${editOwnership.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fullName: editOwnForm.fullName || undefined,
+        email:    editOwnForm.email    || undefined,
+        phone:    editOwnForm.phone    || undefined,
+        cnp:      editOwnForm.cnp      || undefined,
+      }),
+    });
+    if (!res.ok) { setEditOwnError((await res.json()).error); setEditOwnSaving(false); return; }
+    setEditOwnership(null);
+    await loadOwnerships();
+    setEditOwnSaving(false);
+  }
+
+  async function sendInvite() {
+    if (!editOwnership) return;
+    setInviteSending(true); setInviteMsg(null); setInviteUrl(null);
+    const res = await fetch(`/api/proprietari/${editOwnership.id}/invite`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) { setInviteMsg(data.error ?? "Eroare"); }
+    else if (data.emailSent) { setInviteMsg("Email trimis!"); }
+    else { setInviteUrl(data.inviteUrl); setInviteMsg("SMTP neconfigurat — copiați linkul:"); }
+    setInviteSending(false);
+  }
+
+  // ─── Residents ───────────────────────────────────────────────────────────────
+
+  async function saveResident() {
+    setResSaving(true); setResError(null);
+    const res = await fetch("/api/cartea-imobilului", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...resForm, cnp: resForm.cnp || undefined, notes: resForm.notes || undefined }),
+    });
+    if (!res.ok) { setResError((await res.json()).error); setResSaving(false); return; }
+    setShowResModal(false);
+    setResForm(f => ({ ...f, fullName: "", cnp: "", notes: "" }));
+    await loadResidents(); setResSaving(false);
+  }
+
+  async function deactivateResident(id: string) {
+    if (!confirm("Marchezi această persoană ca plecată din imobil?")) return;
+    await fetch(`/api/cartea-imobilului/${id}`, { method: "DELETE" });
+    await loadResidents();
+  }
+
+  // ─── Totals ──────────────────────────────────────────────────────────────────
+
+  const totalUnits = buildings.reduce((s, b) => s + b.units.length, 0);
+  const unassigned = buildings.reduce((s, b) => s + b.units.filter(u => u._count.ownerships === 0).length, 0);
+
+  // ─── Render ───────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="max-w-5xl mx-auto">
+
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Informații esențiale</h1>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {totalUnits} apartamente · {unassigned > 0 ? <span className="text-amber-500">{unassigned} fără proprietar</span> : "toate asignate"}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          {tab === "apartamente" && (
+            <>
+              <Btn variant="ghost" onClick={() => { setShowBuildingModal(true); setBuildingError(null); setBuildingForm({ name: "", address: "" }); }}>
+                + Scară / Corp
+              </Btn>
+              <Btn onClick={() => { setShowAptModal(true); setEditUnit(null); setAptError(null); setAptForm({ buildingId: buildings[0]?.id ?? "", number: "", floor: "", area: "", shareRatio: "", residents: "", heatingType: "NONE", isCompanyHQ: false, companyName: "", companyCUI: "" }); }}
+                disabled={buildings.length === 0}>
+                + Apartament nou
+              </Btn>
+            </>
+          )}
+          {tab === "proprietari" && (
+            <Btn onClick={() => { setShowOwnModal(true); setOwnError(null); }}>
+              + Proprietar nou
+            </Btn>
+          )}
+          {tab === "cartea" && (
+            <Btn onClick={() => { setShowResModal(true); setResError(null); setResForm(f => ({ ...f, unitId: allUnits[0]?.id ?? "" })); }}>
+              + Adaugă locuitor
+            </Btn>
+          )}
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+        <div className="flex border-b border-slate-100">
+          {([
+            { key: "apartamente", label: "Apartamente" },
+            { key: "proprietari", label: "Proprietari" },
+            { key: "cartea",      label: "Locatari" },
+          ] as const).map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={`px-6 py-3.5 text-sm font-medium transition-colors ${tab === t.key ? "border-b-2 border-uat-600 text-uat-700 bg-uat-50/50" : "text-slate-500 hover:text-slate-700"}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="p-6">
+
+          {/* ── TAB: APARTAMENTE ── */}
+          {tab === "apartamente" && (
+            loadingApt ? <Spinner /> : buildings.length === 0 ? (
+              <div className="text-center py-12">
+                <svg className="w-12 h-12 text-slate-200 mx-auto mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75" />
+                </svg>
+                <p className="text-slate-500 font-medium mb-1">Nicio scară / corp înregistrat</p>
+                <p className="text-slate-400 text-sm mb-4">Creează mai întâi o scară sau un corp de clădire, apoi adaugă apartamentele.</p>
+                <Btn onClick={() => { setShowBuildingModal(true); setBuildingError(null); setBuildingForm({ name: "", address: "" }); }}>
+                  + Adaugă scară / corp
+                </Btn>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {buildings.map(b => (
+                  <div key={b.id}>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">{b.name}</p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-100">
+                            {["Ap.", "Etaj", "Suprafață", "Cotă-parte", "Termoficare", "Proprietar", "Locatari", ""].map(h => (
+                              <th key={h} className="text-left text-xs font-medium text-slate-400 pb-2 pr-4">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                          {b.units.map(u => (
+                            <tr key={u.id} className="group hover:bg-slate-50/50">
+                              <td className="py-2.5 pr-4 font-semibold text-slate-800">Ap. {u.number}</td>
+                              <td className="py-2.5 pr-4 text-slate-500">{u.floor != null ? `Et. ${u.floor}` : "—"}</td>
+                              <td className="py-2.5 pr-4 text-slate-500">{u.area ? `${u.area} m²` : "—"}</td>
+                              <td className="py-2.5 pr-4 text-slate-500">{u.shareRatio ? `${u.shareRatio}%` : "—"}</td>
+                              <td className="py-2.5 pr-4 text-xs text-slate-500">{HEATING_LABELS[u.heatingType] ?? "—"}</td>
+                              <td className="py-2.5 pr-4">
+                                {u.ownerships.length === 0
+                                  ? <span className="text-xs text-amber-500">Neasignat</span>
+                                  : u.ownerships.map(o => <span key={o.id} className="text-slate-700">{o.user.fullName}</span>)
+                                }
+                              </td>
+                              <td className="py-2.5 pr-4 text-slate-400 text-xs">{u.residents ?? "—"}</td>
+                              <td className="py-2.5">
+                                <button
+                                  onClick={() => { setEditUnit(u); setAptForm({ buildingId: b.id, number: u.number, floor: u.floor != null ? String(u.floor) : "", area: u.area ? String(u.area) : "", shareRatio: u.shareRatio ? String(u.shareRatio) : "", residents: u.residents != null ? String(u.residents) : "", heatingType: u.heatingType ?? "NONE", isCompanyHQ: u.isCompanyHQ, companyName: u.companyName ?? "", companyCUI: u.companyCUI ?? "" }); setShowAptModal(true); setAptError(null); }}
+                                  className="opacity-0 group-hover:opacity-100 text-xs text-uat-600 hover:text-uat-800 font-medium"
+                                >
+                                  Editează
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+
+          {/* ── TAB: PROPRIETARI ── */}
+          {tab === "proprietari" && (
+            loadingOwn ? <Spinner /> : ownerships.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 text-sm">
+                Niciun proprietar înregistrat.
+                <br /><button onClick={() => setShowOwnModal(true)} className="mt-2 text-uat-600 hover:underline">Adaugă primul proprietar</button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      {["Apt.", "Proprietar", "Email", "Telefon", "Tip", "Din", ""].map(h => (
+                        <th key={h} className="text-left text-xs font-medium text-slate-400 pb-2 pr-4">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {ownerships.map(o => (
+                      <tr key={o.id} className="group hover:bg-slate-50/50">
+                        <td className="py-3 pr-4 font-semibold text-slate-800">
+                          Ap. {o.unit.number}
+                          <span className="text-xs text-slate-400 font-normal ml-1">({o.unit.building.name})</span>
+                        </td>
+                        <td className="py-3 pr-4 font-medium text-slate-700">{o.user.fullName}</td>
+                        <td className="py-3 pr-4 text-slate-500 text-xs">{o.user.email && !o.user.email.includes("noemail+") ? o.user.email : "—"}</td>
+                        <td className="py-3 pr-4 text-slate-500 text-xs">{o.user.phone ?? "—"}</td>
+                        <td className="py-3 pr-4">
+                          <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{OWNERSHIP_TYPES[o.type] ?? o.type}</span>
+                        </td>
+                        <td className="py-3 pr-4 text-slate-400 text-xs">{new Date(o.startDate).toLocaleDateString("ro-RO")}</td>
+                        <td className="py-3">
+                          <button
+                            onClick={() => openEditOwner(o)}
+                            className="opacity-0 group-hover:opacity-100 text-xs text-uat-600 hover:text-uat-800 font-medium"
+                          >
+                            Editează
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+
+          {/* ── TAB: CARTEA IMOBILULUI ── */}
+          {tab === "cartea" && (
+            loadingRes ? <Spinner /> : residents.length === 0 ? (
+              <div className="text-center py-10 text-slate-400 text-sm">
+                Cartea imobilului este goală.
+                <br /><button onClick={() => setShowResModal(true)} className="mt-2 text-uat-600 hover:underline">Înregistrează primul locuitor</button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      {["Apt.", "Nume", "CNP", "Calitate", "De la", "Note", ""].map(h => (
+                        <th key={h} className="text-left text-xs font-medium text-slate-400 pb-2 pr-4">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {residents.map(r => (
+                      <tr key={r.id} className="group hover:bg-slate-50/50">
+                        <td className="py-2.5 pr-4 font-semibold text-slate-800">Ap. {r.unit.number}</td>
+                        <td className="py-2.5 pr-4 font-medium text-slate-700">{r.fullName}</td>
+                        <td className="py-2.5 pr-4 text-slate-400 text-xs font-mono">
+                          {r.cnp ? r.cnp.slice(0,3) + "·".repeat(7) + r.cnp.slice(-3) : "—"}
+                        </td>
+                        <td className="py-2.5 pr-4">
+                          <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{RESIDENT_TYPES[r.type] ?? r.type}</span>
+                        </td>
+                        <td className="py-2.5 pr-4 text-slate-400 text-xs">{new Date(r.startDate).toLocaleDateString("ro-RO")}</td>
+                        <td className="py-2.5 pr-4 text-slate-400 text-xs">{r.notes ?? "—"}</td>
+                        <td className="py-2.5">
+                          <button onClick={() => deactivateResident(r.id)}
+                            className="opacity-0 group-hover:opacity-100 text-xs text-red-400 hover:text-red-600">
+                            Plecat
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+
+        </div>
+      </div>
+
+      {/* ── MODAL: Apartament ── */}
+      {showAptModal && (
+        <Modal title={editUnit ? `Editează Ap. ${editUnit.number}` : "Apartament nou"} onClose={() => { setShowAptModal(false); setEditUnit(null); }}>
+          <div className="grid grid-cols-2 gap-3">
+            {!editUnit && buildings.length > 1 && (
+              <div className="col-span-2">
+                <label className="block text-xs font-medium text-slate-700 mb-1">Scară / Corp *</label>
+                <select value={aptForm.buildingId} onChange={e => setAptForm(f => ({ ...f, buildingId: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none">
+                  {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+            )}
+            {!editUnit && buildings.length === 1 && (
+              <div className="col-span-2 text-xs text-slate-400 bg-slate-50 rounded-lg px-3 py-2">
+                Scară / Corp: <span className="font-medium text-slate-600">{buildings[0].name}</span>
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Nr. apartament *</label>
+              <input type="text" value={aptForm.number} onChange={e => setAptForm(f => ({ ...f, number: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="ex: 12" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Etaj</label>
+              <input type="number" value={aptForm.floor} onChange={e => setAptForm(f => ({ ...f, floor: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="0 = parter" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Suprafață (m²)</label>
+              <input type="number" step="0.01" value={aptForm.area} onChange={e => setAptForm(f => ({ ...f, area: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="ex: 65.50" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Cotă-parte indiviză (%)</label>
+              <input type="number" step="0.0001" value={aptForm.shareRatio} onChange={e => setAptForm(f => ({ ...f, shareRatio: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="ex: 4.5231" />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                Nr. persoane care locuiesc
+                <span className="ml-1 font-normal text-slate-400">(pentru calcul întreținere per persoană)</span>
+              </label>
+              <input type="number" min="0" step="1" value={aptForm.residents} onChange={e => setAptForm(f => ({ ...f, residents: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="ex: 3" />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">Tip termoficare</label>
+              <select value={aptForm.heatingType} onChange={e => setAptForm(f => ({ ...f, heatingType: e.target.value as HeatingType }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none">
+                <option value="NONE">— Nespecificat —</option>
+                <option value="DISTRICT">Termoficare de la oraș (RADET / SACET)</option>
+                <option value="CENTRALIZED">Centrală termică proprie a blocului</option>
+                <option value="INDIVIDUAL">Centrală proprie pe apartament</option>
+              </select>
+            </div>
+          </div>
+          {aptError && <p className="text-sm text-red-500 mt-2">{aptError}</p>}
+          <ModalFooter onCancel={() => { setShowAptModal(false); setEditUnit(null); }} onSave={saveApartment}
+            saving={aptSaving} disabled={!aptForm.number || (!editUnit && !aptForm.buildingId)} />
+        </Modal>
+      )}
+
+      {/* ── MODAL: Proprietar nou ── */}
+      {showOwnModal && (
+        <Modal title="Adaugă proprietar" onClose={() => setShowOwnModal(false)}>
+          <p className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2 mb-1">
+            Chiriașii se înregistrează în tab-ul <strong>Locatari</strong>, nu aici.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            {buildings.length > 1 ? (
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Scară *</label>
+                <select value={ownForm.buildingId} onChange={e => setOwnForm(f => ({ ...f, buildingId: e.target.value }))}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none">
+                  {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+            ) : (
+              <div className="text-xs text-slate-400 bg-slate-50 rounded-lg px-3 py-2 self-end">
+                {buildings[0]?.name}
+              </div>
+            )}
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Apartament *</label>
+              <select value={ownForm.unitId} onChange={e => setOwnForm(f => ({ ...f, unitId: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none">
+                <option value="">— selectează —</option>
+                {unitsByBuilding.map(u => <option key={u.id} value={u.id}>Ap. {u.number}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">Nume complet *</label>
+              <input type="text" value={ownForm.fullName} onChange={e => setOwnForm(f => ({ ...f, fullName: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="Ion Popescu" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                CNP <span className="font-normal text-slate-400">(pentru integrări)</span>
+              </label>
+              <input type="text" value={ownForm.cnp} onChange={e => setOwnForm(f => ({ ...f, cnp: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="1234567890123" maxLength={13} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Telefon</label>
+              <input type="text" value={ownForm.phone} onChange={e => setOwnForm(f => ({ ...f, phone: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="07xx xxx xxx" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Email</label>
+              <input type="email" value={ownForm.email} onChange={e => setOwnForm(f => ({ ...f, email: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="opțional" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Calitate</label>
+              <select value={ownForm.ownerType} onChange={e => setOwnForm(f => ({ ...f, ownerType: e.target.value as typeof ownForm.ownerType }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none">
+                <option value="OWNER">Proprietar</option>
+                <option value="CO_OWNER">Coproprietar</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Data intrării *</label>
+              <input type="date" value={ownForm.startDate} onChange={e => setOwnForm(f => ({ ...f, startDate: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" />
+            </div>
+          </div>
+          {ownError && <p className="text-sm text-red-500 mt-2">{ownError}</p>}
+          <ModalFooter onCancel={() => setShowOwnModal(false)} onSave={saveOwner}
+            saving={ownSaving} disabled={!ownForm.fullName || !ownForm.unitId} />
+        </Modal>
+      )}
+
+      {/* ── MODAL: Editează proprietar ── */}
+      {editOwnership && (
+        <Modal title={`Editează proprietar — Ap. ${editOwnership.unit.number}`} onClose={() => setEditOwnership(null)}>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">Nume complet *</label>
+              <input type="text" value={editOwnForm.fullName}
+                onChange={e => setEditOwnForm(f => ({ ...f, fullName: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Email</label>
+              <input type="email" value={editOwnForm.email}
+                onChange={e => setEditOwnForm(f => ({ ...f, email: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none"
+                placeholder="Adaugă email pentru invitație" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Telefon</label>
+              <input type="text" value={editOwnForm.phone}
+                onChange={e => setEditOwnForm(f => ({ ...f, phone: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none"
+                placeholder="07xx xxx xxx" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">CNP</label>
+              <input type="text" value={editOwnForm.cnp}
+                onChange={e => setEditOwnForm(f => ({ ...f, cnp: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none font-mono"
+                placeholder="1234567890123" maxLength={13} />
+            </div>
+          </div>
+          {editOwnError && <p className="text-sm text-red-500 mt-2">{editOwnError}</p>}
+
+          {/* Invite section */}
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <p className="text-xs font-semibold text-slate-700 mb-1">Invitație pe platformă</p>
+            <p className="text-xs text-slate-400 mb-2">
+              Trimite un email prin care proprietarul este invitat să își creeze cont și să acceseze platforma.
+              {!editOwnForm.email && <span className="text-amber-500 ml-1">Adaugă mai întâi un email.</span>}
+            </p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={sendInvite}
+                  disabled={inviteSending || !editOwnForm.email}
+                  className="text-sm font-medium px-3 py-1.5 rounded-lg border border-uat-200 text-uat-700 bg-uat-50 hover:bg-uat-100 disabled:opacity-40 transition-colors"
+                >
+                  {inviteSending ? "Se trimite..." : "Trimite invitație"}
+                </button>
+                {inviteMsg && (
+                  <span className={`text-xs font-medium ${inviteMsg === "Email trimis!" ? "text-emerald-600" : "text-amber-600"}`}>
+                    {inviteMsg}
+                  </span>
+                )}
+              </div>
+              {inviteUrl && (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                  <p className="text-xs text-slate-500 mb-1">Copiați și trimiteți proprietarului:</p>
+                  <input readOnly value={inviteUrl} onClick={e => (e.target as HTMLInputElement).select()}
+                    className="w-full text-xs font-mono text-slate-700 bg-transparent outline-none cursor-text" />
+                </div>
+              )}
+            </div>
+          </div>
+
+          <ModalFooter onCancel={() => setEditOwnership(null)} onSave={saveEditOwner}
+            saving={editOwnSaving} disabled={!editOwnForm.fullName} />
+        </Modal>
+      )}
+
+      {/* ── MODAL: Locuitor (Cartea imobilului) ── */}
+      {showResModal && (
+        <Modal title="Înregistrează locuitor" onClose={() => setShowResModal(false)}>
+          <p className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2 mb-3">
+            Cartea imobilului conține toți cei care locuiesc efectiv: proprietari, chiriași, minori, însoțitori.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">Apartament *</label>
+              <select value={resForm.unitId} onChange={e => setResForm(f => ({ ...f, unitId: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none">
+                {allUnits.map(u => <option key={u.id} value={u.id}>Ap. {u.number} — {u.buildingName}</option>)}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block text-xs font-medium text-slate-700 mb-1">Nume complet *</label>
+              <input type="text" value={resForm.fullName} onChange={e => setResForm(f => ({ ...f, fullName: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="Ion Popescu" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">CNP <span className="text-slate-400">(opțional)</span></label>
+              <input type="text" value={resForm.cnp} onChange={e => setResForm(f => ({ ...f, cnp: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none font-mono" placeholder="1234567890123" maxLength={13} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Calitate *</label>
+              <select value={resForm.type} onChange={e => setResForm(f => ({ ...f, type: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none">
+                {Object.entries(RESIDENT_TYPES).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Data înregistrării *</label>
+              <input type="date" value={resForm.startDate} onChange={e => setResForm(f => ({ ...f, startDate: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Note</label>
+              <input type="text" value={resForm.notes} onChange={e => setResForm(f => ({ ...f, notes: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none" placeholder="ex: copil minor, bonă etc." />
+            </div>
+          </div>
+          {resError && <p className="text-sm text-red-500 mt-2">{resError}</p>}
+          <ModalFooter onCancel={() => setShowResModal(false)} onSave={saveResident}
+            saving={resSaving} disabled={!resForm.fullName || !resForm.unitId} />
+        </Modal>
+      )}
+
+      {/* ── MODAL: Scară / Corp nou ── */}
+      {showBuildingModal && (
+        <Modal title="Adaugă scară / corp" onClose={() => setShowBuildingModal(false)}>
+          <p className="text-sm text-slate-500 mb-4">
+            O scară sau corp reprezintă o intrare separată a blocului. Dacă blocul are o singură intrare, adaugă una singură (ex: &ldquo;Scara A&rdquo; sau numele blocului).
+          </p>
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Nume *</label>
+              <input
+                autoFocus
+                type="text" value={buildingForm.name}
+                onChange={e => setBuildingForm(f => ({ ...f, name: e.target.value }))}
+                onKeyDown={e => { if (e.key === "Enter" && buildingForm.name.trim()) saveBuilding(); }}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none"
+                placeholder="ex: Scara A, Corp 1, Bloc 5A"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">Adresă <span className="text-slate-400 font-normal">(opțional)</span></label>
+              <input
+                type="text" value={buildingForm.address}
+                onChange={e => setBuildingForm(f => ({ ...f, address: e.target.value }))}
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-uat-500 focus:outline-none"
+                placeholder="ex: Str. Florilor nr. 10, sc. A"
+              />
+            </div>
+          </div>
+          {buildingError && <p className="text-sm text-red-500 mt-2">{buildingError}</p>}
+          <ModalFooter
+            onCancel={() => setShowBuildingModal(false)}
+            onSave={saveBuilding}
+            saving={buildingSaving}
+            disabled={!buildingForm.name.trim()}
+          />
+        </Modal>
+      )}
+
+    </div>
+  );
+}
+
+// ─── Small helpers ────────────────────────────────────────────────────────────
+
+function Spinner() {
+  return <div className="flex justify-center py-16"><div className="w-7 h-7 border-2 border-uat-600 border-t-transparent rounded-full animate-spin" /></div>;
+}
+function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-slate-100 sticky top-0 bg-white z-10">
+          <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="p-6 space-y-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+function ModalFooter({ onCancel, onSave, saving, disabled }: { onCancel: () => void; onSave: () => void; saving: boolean; disabled?: boolean }) {
+  return (
+    <div className="flex gap-3 pt-2 sticky bottom-0 bg-white border-t border-slate-100 mt-4 pb-0 -mx-6 px-6 pt-4">
+      <button onClick={onCancel} className="flex-1 border border-slate-200 text-slate-600 text-sm font-medium py-2 rounded-lg hover:bg-slate-50">Anulează</button>
+      <button onClick={onSave} disabled={saving || disabled}
+        className="flex-1 bg-uat-600 text-white text-sm font-medium py-2 rounded-lg hover:bg-uat-700 disabled:opacity-50">
+        {saving ? "Se salvează..." : "Salvează"}
+      </button>
+    </div>
+  );
+}

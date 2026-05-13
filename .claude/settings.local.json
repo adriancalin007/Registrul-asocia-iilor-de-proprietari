@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx next *)",
+      "Bash(mkdir -p \"d:/Dropbox/Personale/01 Actiuni civice/Portal Asociatii Sector 1/bloc-uat-starter/src/app/\\(dashboard\\)/uat/associations/[id]/scoring\")",
+      "Bash(Get-ChildItem -Path \"d:\\\\Dropbox\\\\Personale\\\\01 Actiuni civice\\\\Portal Asociatii Sector 1\\\\bloc-uat-starter\\\\src\\\\app\" -Directory)",
+      "PowerShell(Get-ChildItem -Path \"d:\\\\Dropbox\\\\Personale\\\\01 Actiuni civice\\\\Portal Asociatii Sector 1\\\\bloc-uat-starter\\\\src\\\\app\\\\\\(dashboard\\)\" | Where-Object { $_.PSIsContainer } | Select-Object Name)",
+      "PowerShell(Get-ChildItem -Path \"d:\\\\Dropbox\\\\Personale\\\\01 Actiuni civice\\\\Portal Asociatii Sector 1\\\\bloc-uat-starter\\\\src\\\\app\\\\\\(dashboard\\)\" | Select-Object Name, @{N=\"Type\";E={if\\($_.PSIsContainer\\){\"Directory\"}else{\"File\"}}} | ConvertTo-Json)",
+      "Read(//d/Dropbox/Personale/01 Actiuni civice/Portal Asociatii Sector 1/bloc-uat-starter/src/app/api/furnizori/**)",
+      "Bash(mkdir -p \"d:/Dropbox/Personale/01 Actiuni civice/Portal Asociatii Sector 1/bloc-uat-starter/src/app/api/comunicare/[id]/messages\" \"d:/Dropbox/Personale/01 Actiuni civice/Portal Asociatii Sector 1/bloc-uat-starter/src/app/api/comunicare/[id]/status\")"
+    ],
+    "additionalDirectories": [
+      "d:\\Dropbox\\Personale\\01 Actiuni civice\\Portal Asociatii Sector 1\\bloc-uat-starter\\src\\app\\(dashboard)\\uat\\associations\\[id]\\scoring",
+      "d:\\Dropbox\\Personale\\01 Actiuni civice\\Portal Asociatii Sector 1\\bloc-uat-starter\\src\\app\\api\\comunicare\\[id]"
+    ]
+  }
+}

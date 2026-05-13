@@ -1,0 +1,301 @@
+"use client";
+// src/app/(dashboard)/uat/evaluation-grid/GridManager.tsx
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { CLASSIFICATION_LABELS, CLASSIFICATION_BADGE } from "@/lib/scoring";
+import type { ScoreClassification } from "@prisma/client";
+
+type BaremLevel = { points: number; label: string };
+
+type Criterion = {
+  id: string; gridId: string; number: number; title: string;
+  description: string | null; maxPoints: number; isEliminator: boolean;
+  isActive: boolean; scoringBarem: unknown; displayOrder: number;
+};
+
+type Grid = {
+  id: string; versionLabel: string; description: string | null;
+  isActive: boolean; thresholds: unknown; createdAt: string;
+  criteria: Criterion[];
+  _count: { scores: number };
+};
+
+interface Props { grids: Grid[]; isSuperAdmin: boolean }
+
+function ThresholdDisplay({ thresholds }: { thresholds: unknown }) {
+  const t = thresholds as { levels?: { label: string; minPercent: number }[] };
+  const levels = t?.levels ?? [];
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {levels.map((l, i) => (
+        <span key={i} className={`text-xs px-2 py-0.5 rounded-full font-medium border ${CLASSIFICATION_BADGE[l.label as ScoreClassification] ?? "bg-slate-50 text-slate-500 border-slate-200"}`}>
+          {CLASSIFICATION_LABELS[l.label as ScoreClassification] ?? l.label} ≥{l.minPercent}%
+        </span>
+      ))}
+      <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-red-50 text-red-600 border border-red-200">
+        {CLASSIFICATION_LABELS["SANCTIUNE"]} &lt;{Math.min(...levels.map(l => l.minPercent))}%
+      </span>
+    </div>
+  );
+}
+
+function CriterionRow({ c, gridId, onReload, isSuperAdmin }: { c: Criterion; gridId: string; onReload: () => void; isSuperAdmin: boolean }) {
+  const [editing, setEditing]     = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [form, setForm] = useState({
+    title: c.title, description: c.description ?? "", maxPoints: c.maxPoints,
+    isEliminator: c.isEliminator, isActive: c.isActive,
+    scoringBarem: (c.scoringBarem as BaremLevel[] | null) ?? [],
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState<string | null>(null);
+
+  async function save() {
+    setSaving(true); setError(null);
+    const res = await fetch(`/api/admin/evaluation-grids/${gridId}/criteria/${c.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(form),
+    });
+    setSaving(false);
+    if (!res.ok) { const d = await res.json(); setError(d.error); return; }
+    setEditing(false); onReload();
+  }
+
+  async function deleteCriterion() {
+    setSaving(true); setError(null);
+    const res = await fetch(`/api/admin/evaluation-grids/${gridId}/criteria/${c.id}`, { method: "DELETE" });
+    setSaving(false);
+    if (!res.ok) { const d = await res.json(); setError(d.error ?? "Ștergerea a eșuat"); setConfirming(false); return; }
+    setConfirming(false); onReload();
+  }
+
+  if (!editing) return (
+    <div className="rounded-xl hover:bg-slate-50 group">
+      <div className="flex items-start gap-3 py-2.5 px-3">
+        <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
+          <span className="text-xs font-bold text-slate-400 w-5 text-right">#{c.number}</span>
+          {c.isEliminator && <span title="Eliminator" className="text-xs bg-red-50 text-red-500 border border-red-100 px-1 py-0 rounded font-semibold">E</span>}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className={`text-sm font-medium ${c.isActive ? "text-slate-900" : "text-slate-400 line-through"}`}>{c.title}</p>
+          {c.description && <p className="text-xs text-slate-400 mt-0.5 truncate">{c.description}</p>}
+        </div>
+        <span className="text-xs font-bold text-slate-700 flex-shrink-0">{c.maxPoints} pt</span>
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => setEditing(true)} className="text-xs text-uat-600 hover:underline">Editează</button>
+          {isSuperAdmin && (confirming ? (
+            <>
+              <button onClick={deleteCriterion} disabled={saving}
+                className="text-xs text-red-600 font-semibold hover:underline disabled:opacity-50">
+                {saving ? "..." : "Confirmă șterge"}
+              </button>
+              <button onClick={() => setConfirming(false)} className="text-xs text-slate-400 hover:underline">Anulează</button>
+            </>
+          ) : (
+            <button onClick={() => setConfirming(true)} className="text-xs text-red-400 hover:text-red-600">Șterge</button>
+          ))}
+        </div>
+      </div>
+      {error && (
+        <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-1.5 mx-3 mb-2">{error}</p>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2">
+          <label className="label-text">Titlu criteriu *</label>
+          <input className="input text-sm" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+        </div>
+        <div className="col-span-2">
+          <label className="label-text">Descriere</label>
+          <textarea className="input text-sm" rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+        </div>
+        <div>
+          <label className="label-text">Punctaj maxim</label>
+          <input className="input text-sm" type="number" min={1} max={100} value={form.maxPoints} onChange={e => setForm(f => ({ ...f, maxPoints: Number(e.target.value) }))} />
+        </div>
+        <div className="flex flex-col gap-2 justify-end">
+          <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <input type="checkbox" checked={form.isEliminator} onChange={e => setForm(f => ({ ...f, isEliminator: e.target.checked }))} />
+            Criteriu eliminator (⚠)
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <input type="checkbox" checked={form.isActive} onChange={e => setForm(f => ({ ...f, isActive: e.target.checked }))} />
+            Criteriu activ
+          </label>
+        </div>
+      </div>
+
+      <div>
+        <label className="label-text mb-1.5 block">Barem de punctare</label>
+        <div className="space-y-1.5">
+          {form.scoringBarem.map((b, i) => (
+            <div key={i} className="flex gap-2 items-center">
+              <input className="input text-xs w-16" type="number" min={0} value={b.points}
+                onChange={e => setForm(f => ({ ...f, scoringBarem: f.scoringBarem.map((x, j) => j === i ? { ...x, points: Number(e.target.value) } : x) }))} />
+              <input className="input text-xs flex-1" value={b.label}
+                onChange={e => setForm(f => ({ ...f, scoringBarem: f.scoringBarem.map((x, j) => j === i ? { ...x, label: e.target.value } : x) }))} />
+              <button onClick={() => setForm(f => ({ ...f, scoringBarem: f.scoringBarem.filter((_, j) => j !== i) }))}
+                className="text-xs text-red-400 hover:text-red-600">✕</button>
+            </div>
+          ))}
+          <button onClick={() => setForm(f => ({ ...f, scoringBarem: [...f.scoringBarem, { points: 0, label: "" }] }))}
+            className="text-xs text-uat-600 hover:underline">+ Adaugă nivel</button>
+        </div>
+      </div>
+
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex gap-2">
+        <button onClick={save} disabled={saving} className="btn-primary text-sm">{saving ? "Se salvează..." : "Salvează"}</button>
+        <button onClick={() => setEditing(false)} className="btn-ghost text-sm">Anulează</button>
+      </div>
+    </div>
+  );
+}
+
+export default function GridManager({ grids: initial, isSuperAdmin }: Props) {
+  const router = useRouter();
+  const [grids, setGrids]       = useState<Grid[]>(initial);
+  const [activeGrid, setActive] = useState<string | null>(initial.find(g => g.isActive)?.id ?? initial[0]?.id ?? null);
+  const [working, setWorking]   = useState(false);
+  const [showNew, setShowNew]   = useState(false);
+  const [newLabel, setNewLabel] = useState("");
+  const [cloneFrom, setCloneFrom] = useState("");
+
+  const grid = grids.find(g => g.id === activeGrid) ?? null;
+
+  async function reload() {
+    const res = await fetch("/api/admin/evaluation-grids");
+    if (res.ok) { const data = await res.json(); setGrids(data); }
+    router.refresh();
+  }
+
+  async function activate(gridId: string) {
+    setWorking(true);
+    await fetch(`/api/admin/evaluation-grids/${gridId}/activate`, { method: "POST" });
+    setWorking(false);
+    await reload();
+  }
+
+  async function createGrid() {
+    if (!newLabel.trim()) return;
+    setWorking(true);
+    const res = await fetch("/api/admin/evaluation-grids", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ versionLabel: newLabel.trim(), cloneFromGridId: cloneFrom || undefined }),
+    });
+    setWorking(false);
+    if (res.ok) { const g = await res.json(); setNewLabel(""); setCloneFrom(""); setShowNew(false); setActive(g.id); await reload(); }
+  }
+
+  async function addCriterion(gridId: string) {
+    const num = (grid?.criteria.length ?? 0) + 1;
+    await fetch(`/api/admin/evaluation-grids/${gridId}/criteria`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ number: num, title: "Criteriu nou", maxPoints: 10, isEliminator: false, isActive: true, displayOrder: num, scoringBarem: [{ points: 10, label: "Complet" }, { points: 5, label: "Parțial" }, { points: 0, label: "Lipsă" }] }),
+    });
+    await reload();
+  }
+
+  if (grids.length === 0) return (
+    <div className="card p-8 text-center text-slate-400">
+      <p>Nicio grilă de evaluare. Rulați seeding-ul sau creați una nouă.</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      {/* Grid selector */}
+      <div className="card">
+        <div className="card-header flex items-center justify-between">
+          <h2 className="font-semibold text-slate-900">Versiuni grilă</h2>
+          {isSuperAdmin && (
+            <button onClick={() => setShowNew(v => !v)} className="text-sm text-uat-600 font-semibold hover:text-uat-700">
+              {showNew ? "Anulează" : "+ Versiune nouă"}
+            </button>
+          )}
+        </div>
+
+        {showNew && (
+          <div className="px-6 pb-4 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label-text">Etichetă versiune *</label>
+                <input className="input text-sm" placeholder="v2.0 — 2026" value={newLabel} onChange={e => setNewLabel(e.target.value)} />
+              </div>
+              <div>
+                <label className="label-text">Clonează criterii din</label>
+                <select className="input text-sm" value={cloneFrom} onChange={e => setCloneFrom(e.target.value)}>
+                  <option value="">— Grilă goală —</option>
+                  {grids.map(g => <option key={g.id} value={g.id}>{g.versionLabel}</option>)}
+                </select>
+              </div>
+            </div>
+            <button onClick={createGrid} disabled={!newLabel.trim() || working} className="btn-primary text-sm">Creează versiunea</button>
+          </div>
+        )}
+
+        <div className="divide-y divide-slate-100">
+          {grids.map(g => (
+            <button key={g.id} onClick={() => setActive(g.id)}
+              className={`w-full flex items-center justify-between px-6 py-3 hover:bg-slate-50 transition-colors text-left ${g.id === activeGrid ? "bg-uat-50/50" : ""}`}>
+              <div className="flex items-center gap-3">
+                {g.isActive && <span className="w-2 h-2 rounded-full bg-emerald-400 flex-shrink-0" />}
+                {!g.isActive && <span className="w-2 h-2 rounded-full bg-slate-200 flex-shrink-0" />}
+                <div>
+                  <p className="text-sm font-medium text-slate-900">{g.versionLabel}</p>
+                  {g.description && <p className="text-xs text-slate-400 truncate max-w-xs">{g.description}</p>}
+                </div>
+              </div>
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <span className="text-xs text-slate-400">{g.criteria.length} criterii · {g._count.scores} scoruri</span>
+                {g.isActive && <span className="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-medium">Activă</span>}
+                {!g.isActive && isSuperAdmin && (
+                  <button onClick={e => { e.stopPropagation(); activate(g.id); }} disabled={working}
+                    className="text-xs text-uat-600 hover:underline border border-uat-200 px-2 py-0.5 rounded-lg">Activează</button>
+                )}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Active grid editor */}
+      {grid && (
+        <div className="card">
+          <div className="card-header flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold text-slate-900">{grid.versionLabel}</h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {grid.criteria.filter(c => c.isActive).reduce((s, c) => s + c.maxPoints, 0)} puncte totale ·{" "}
+                {grid.criteria.filter(c => c.isEliminator && c.isActive).length} eliminatorii
+              </p>
+            </div>
+          </div>
+
+          {/* Thresholds display */}
+          <div className="px-6 pb-3">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">Praguri clasificare</p>
+            <ThresholdDisplay thresholds={grid.thresholds} />
+          </div>
+
+          {/* Criteria list */}
+          <div className="px-3 pb-3 space-y-0.5">
+            {grid.criteria.map(c => (
+              <CriterionRow key={c.id} c={c} gridId={grid.id} onReload={reload} isSuperAdmin={isSuperAdmin} />
+            ))}
+          </div>
+
+          <div className="px-6 pb-4">
+            <button onClick={() => addCriterion(grid.id)} className="text-sm text-uat-600 hover:underline font-medium">
+              + Adaugă criteriu
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -2,71 +2,71 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { Rol, TipAdeverinta } from "@prisma/client";
-import { inregistreazaAudit } from "@/lib/audit";
+import { UserRole, CertificateType, CertificateStatus, AuditAction } from "@prisma/client";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session) return NextResponse.json({ eroare: "Neautentificat" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const rol = session.user.rol as Rol;
-  if (rol !== Rol.PROPRIETAR) {
-    return NextResponse.json({ eroare: "Doar proprietarii pot solicita adeverințe" }, { status: 403 });
+  const role = session.user.role as UserRole;
+  if (role !== UserRole.OWNER) {
+    return NextResponse.json({ error: "Only owners can request certificates" }, { status: 403 });
   }
 
-  const { tip } = await req.json();
+  const { type } = await req.json();
 
-  if (!Object.values(TipAdeverinta).includes(tip)) {
-    return NextResponse.json({ eroare: "Tip adeverință invalid" }, { status: 400 });
+  if (!Object.values(CertificateType).includes(type as CertificateType)) {
+    return NextResponse.json({ error: "Invalid certificate type" }, { status: 400 });
   }
 
-  // Găsim proprietatea activă
-  const proprietate = await prisma.proprietate.findFirst({
-    where: { utilizatorId: session.user.id, activ: true },
-    include: { apartament: { include: { bloc: true } } },
+  const ownership = await prisma.ownership.findFirst({
+    where: { userId: session.user.id, isActive: true },
+    include: { unit: { include: { building: true } } },
   });
 
-  if (!proprietate) {
-    return NextResponse.json({ eroare: "Nu aveți o proprietate înregistrată" }, { status: 404 });
+  if (!ownership) {
+    return NextResponse.json({ error: "No active ownership found" }, { status: 404 });
   }
 
-  const asociatieId = proprietate.apartament.bloc.asociatieId;
+  const associationId = ownership.unit.building.associationId;
 
-  // Verificăm dacă nu există deja o solicitare activă de același tip
-  const existenta = await prisma.adeverinta.findFirst({
+  // Check for existing active request of the same type
+  const existing = await prisma.certificate.findFirst({
     where: {
-      proprietateId: proprietate.id,
-      tip,
-      stare: { in: ["SOLICITATA", "APROBATA"] },
+      ownershipId: ownership.id,
+      type: type as CertificateType,
+      status: { in: [CertificateStatus.REQUESTED, CertificateStatus.APPROVED] },
     },
   });
 
-  if (existenta) {
+  if (existing) {
     return NextResponse.json(
-      { eroare: "Aveți deja o solicitare activă pentru acest tip de adeverință" },
+      { error: "You already have an active request for this certificate type" },
       { status: 409 }
     );
   }
 
-  const adeverinta = await prisma.adeverinta.create({
+  const certificate = await prisma.certificate.create({
     data: {
-      asociatieId,
-      proprietateId: proprietate.id,
-      tip,
-      stare: "SOLICITATA",
+      associationId,
+      ownershipId: ownership.id,
+      type: type as CertificateType,
+      status: CertificateStatus.REQUESTED,
     },
   });
 
-  await inregistreazaAudit({
-    utilizatorId: session.user.id,
-    rol,
-    tip: "CREARE",
-    resursa: "Adeverinta",
-    resursaId: adeverinta.id,
-    asociatieId,
-    adeverintaId: adeverinta.id,
-    detalii: { tip },
+  await logAudit({
+    userId: session.user.id,
+    role,
+    action: AuditAction.CREATE,
+    resource: "Certificate",
+    resourceId: certificate.id,
+    associationId,
+    certificateId: certificate.id,
+    metadata: { type },
+    ipAddress: getClientIp(req),
   });
 
-  return NextResponse.json({ succes: true, id: adeverinta.id });
+  return NextResponse.json({ success: true, id: certificate.id });
 }

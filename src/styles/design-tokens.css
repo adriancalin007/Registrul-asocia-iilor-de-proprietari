@@ -1,0 +1,54 @@
+/* ─────────────────────────────────────────────
+   Bloc-UAT Design Tokens — REFERINȚĂ DOCUMENTARĂ
+   Conținutul este inlinat direct în globals.css
+   (postcss-import nu e în pipeline).
+   Nu importa acest fișier direct.
+───────────────────────────────────────────── */
+:root {
+
+  /* ── Brand colors ──────────────────────────── */
+  --sky:           #1d6e7e;   /* institutional teal, primary actions */
+  --sky-mid:       #228ba0;   /* hover state */
+  --sky-light:     #f0f9fa;   /* tinted backgrounds */
+
+  --coral:         #f06b56;   /* public-portal accent / kicker labels */
+  --coral-light:   #fef4f2;   /* tinted background */
+
+  --forest-3:      #5fc9a3;   /* mint — decorative accents */
+  --forest-dark:   #217a3a;   /* active / conform status */
+  --forest-light:  #d6ede0;   /* status chip background */
+
+  --amber:         #b58c0a;   /* warning / pending status */
+  --amber-light:   #fdf8ee;   /* status chip background */
+
+  /* ── Text (ink) ────────────────────────────── */
+  --ink-1:  #0f172a;   /* headings, strong */
+  --ink-2:  #1e293b;   /* body */
+  --ink-3:  #475569;   /* secondary */
+  --ink-4:  #94a3b8;   /* placeholder, disabled */
+
+  /* ── Backgrounds (paper) ────────────────────── */
+  --paper-1: #ffffff;   /* card surfaces */
+  --paper-2: #f8fafc;   /* page background */
+  --paper-3: #f1f5f9;   /* section dividers, hover fills */
+  --paper-4: #e2e8f0;   /* strong borders, dividers */
+
+  /* ── Borders ────────────────────────────────── */
+  --border:        rgba(0, 0, 0, 0.07);    /* default card/input border */
+  --border-strong: rgba(0, 0, 0, 0.12);    /* focused / emphasized */
+
+  /* ── Border radius ──────────────────────────── */
+  --radius-xs:  4px;
+  --radius-sm:  8px;
+  --radius-md:  12px;
+  --radius-lg:  16px;
+  --radius-xl:  20px;
+  --radius-2xl: 28px;
+
+  /* ── Elevation / shadows ────────────────────── */
+  --shadow-xs:        0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-card:      0 1px 3px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.04);
+  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.08), 0 12px 32px rgba(0, 0, 0, 0.06);
+  --shadow-modal:     0 20px 60px rgba(0, 0, 0, 0.15), 0 4px 16px rgba(0, 0, 0, 0.08);
+
+}

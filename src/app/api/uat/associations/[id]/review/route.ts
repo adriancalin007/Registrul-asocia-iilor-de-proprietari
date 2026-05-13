@@ -55,6 +55,31 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 
   if (action === "VALIDATE") {
+    const docs = association.registrationDocs as Record<string, unknown> ?? {};
+    const president = docs.president as Record<string, string> | undefined;
+    const administrator = docs.administrator as Record<string, string> | undefined;
+    const cenzor = docs.cenzor as Record<string, string> | undefined;
+    const committee = docs.executiveCommittee as Array<Record<string, string>> | undefined;
+
+    const hasName = (p: Record<string, string> | undefined): boolean => {
+      if (!p) return false;
+      if (p.entityType === "company") return !!(p.companyName?.trim());
+      return !!(p.firstName?.trim() || p.lastName?.trim());
+    };
+
+    const missing: string[] = [];
+    if (!hasName(president)) missing.push("Președinte CA");
+    if (!hasName(administrator)) missing.push("Administrator");
+    if (!hasName(cenzor)) missing.push("Cenzor");
+    if (!committee || committee.length < 2) missing.push("Minim 2 membri CEX");
+
+    if (missing.length > 0) {
+      return NextResponse.json(
+        { error: `Nu se poate valida. Lipsesc: ${missing.join(", ")}.` },
+        { status: 400 }
+      );
+    }
+
     await prisma.association.update({
       where: { id: params.id },
       data: { status: "ACTIVE", validatedAt: new Date(), validatedBy: session.user.id, rejectionReason: null },

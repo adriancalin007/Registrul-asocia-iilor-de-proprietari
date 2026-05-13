@@ -3,81 +3,347 @@ import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { UserRole } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import type { Metadata } from "next";
+import ServiciiInline from "./ServiciiInline";
+import AssociationPicker from "./AssociationPicker";
+import AssociationCard from "./AssociationCard";
+import { PORTAL_EXTINS } from "@/lib/features";
 
-export const metadata: Metadata = { title: "Dashboard" };
+export const metadata: Metadata = { title: "Portal Civic Sector 1" };
+
+// External services config
+const EXTERNAL_SERVICES = [
+  {
+    key: "dgitl",
+    label: "DGITL Sector 1",
+    descKey: "dgitlDesc",
+    url: "https://online.impozitelocale1.ro",
+    icon: "🏛️",
+    cetateanOnly: true,
+  },
+  {
+    key: "ancpi",
+    label: "ANCPI / MyEterra",
+    descKey: "ancpiDesc",
+    url: "https://myeterra.ancpi.ro",
+    icon: "📋",
+    cetateanOnly: false,
+  },
+  {
+    key: "reges",
+    label: "REGES-Online",
+    descKey: "regesDesc",
+    url: "https://reges-online.inspectiamuncii.ro",
+    icon: "💼",
+    cetateanOnly: false,
+  },
+  {
+    key: "spv",
+    label: "SPV ANAF",
+    descKey: "spvDesc",
+    url: "https://spv.anaf.ro",
+    icon: "📊",
+    cetateanOnly: false,
+  },
+  {
+    key: "urbanism",
+    label: "Urbanism Sector 1",
+    descKey: "urbanismDesc",
+    url: "https://servicii.primariasector1.ro",
+    icon: "🏗️",
+    cetateanOnly: true,
+  },
+  {
+    key: "mai",
+    label: "MAI / Acte identitate",
+    descKey: "maiDesc",
+    url: "https://hub.mai.gov.ro",
+    icon: "🪪",
+    cetateanOnly: false,
+  },
+  {
+    key: "dgas",
+    label: "Asistență socială DGAS",
+    descKey: "dgasDesc",
+    url: "https://www.primariasector1.ro/directia-generala-de-asistenta-sociala",
+    icon: "🤝",
+    cetateanOnly: true,
+  },
+];
+
+const DESCRIPTIONS: Record<string, string> = {
+  dgitlDesc: "Impozite locale și certificate fiscale",
+  ancpiDesc: "Carte funciară, documente proprietate",
+  regesDesc: "Extras istoric angajări",
+  spvDesc: "Declarații fiscale, rambursări TVA",
+  urbanismDesc: "Autorizații construire, planuri urbanistice",
+  maiDesc: "Carte de identitate electronică, pașaport",
+  dgasDesc: "Asistență socială Sector 1",
+};
 
 export default async function DashboardPage() {
   const session = await auth();
   if (!session) redirect("/login");
 
   const role = session.user.role as UserRole;
+  const civicType = session.user.civicType ?? "NEIDENTIFICAT";
 
   if (role === UserRole.UAT_OPERATOR || role === UserRole.SUPER_ADMIN) {
     redirect("/uat");
   }
 
-  // Find active association for this user
-  const mandate = await prisma.mandate.findFirst({
-    where: { userId: session.user.id, isActive: true },
-    include: { association: { select: { id: true, name: true, status: true } } },
-  });
+  // Association — managers can have multiple mandates
+  const isManagerRole = ([UserRole.MANAGER, UserRole.BOARD_PRESIDENT, UserRole.AUDITOR] as UserRole[]).includes(role);
+  let association: { id: string; name: string; neighborhood: string | null } | null = null;
 
-  const ownership = await prisma.ownership.findFirst({
-    where: { userId: session.user.id, isActive: true },
-    include: {
-      unit: {
-        include: {
-          building: {
-            include: { association: { select: { id: true, name: true, status: true } } },
-          },
-        },
-      },
-    },
-  });
+  // Multi-association data for managers (populated below)
+  let allAssociations: { id: string; name: string; neighborhood: string | null; avariiOpen: number; sesizariOpen: number }[] = [];
+  let activeAssocId: string | null = null;
 
-  const association = mandate?.association ?? ownership?.unit.building.association;
+  if (isManagerRole) {
+    const cookieStore = cookies();
+    activeAssocId = cookieStore.get("asociatie_activa")?.value ?? null;
 
-  if (!association) {
-    return (
-      <div className="max-w-lg mx-auto text-center py-20">
-        <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4">
-          <svg className="w-8 h-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21" />
-          </svg>
-        </div>
-        <h2 className="text-xl font-semibold text-slate-900 mb-2">No association linked</h2>
-        <p className="text-slate-500 text-sm">Your account has not been linked to an owners association yet. Contact your association administrator.</p>
-      </div>
-    );
+    const mandates = await prisma.mandate.findMany({
+      where: { userId: session.user.id, isActive: true },
+      include: { association: { select: { id: true, name: true, neighborhood: true, status: true } } },
+      orderBy: { startDate: "desc" },
+    });
+    const activeAssociations = mandates
+      .filter(m => m.association.status === "ACTIVE")
+      .map(m => ({ id: m.association.id, name: m.association.name, neighborhood: m.association.neighborhood }));
+
+    const resolvedActiveId = activeAssocId ?? activeAssociations[0]?.id ?? null;
+    activeAssocId = resolvedActiveId;
+    association = activeAssociations.find(a => a.id === resolvedActiveId) ?? activeAssociations[0] ?? null;
+
+    if (activeAssociations.length > 1) {
+      // Fetch alert counts per association in one query each
+      const assocIds = activeAssociations.map(a => a.id);
+      const [avariiRows, sesizariRows] = await Promise.all([
+        prisma.issue.groupBy({
+          by: ["associationId"],
+          where: { associationId: { in: assocIds }, status: { in: ["OPEN", "IN_PROGRESS"] } },
+          _count: { id: true },
+        }),
+        prisma.sesizare.groupBy({
+          by: ["associationId"],
+          where: { associationId: { in: assocIds }, status: { in: ["OPEN", "IN_PROGRESS"] } },
+          _count: { id: true },
+        }),
+      ]);
+      const avariiMap = Object.fromEntries(avariiRows.map(r => [r.associationId, r._count.id]));
+      const sesizariMap = Object.fromEntries(sesizariRows.map(r => [r.associationId, r._count.id]));
+      allAssociations = activeAssociations.map(a => ({
+        ...a,
+        avariiOpen:   avariiMap[a.id]   ?? 0,
+        sesizariOpen: sesizariMap[a.id] ?? 0,
+      }));
+    }
+  } else {
+    const mandate = await prisma.mandate.findFirst({
+      where: { userId: session.user.id, isActive: true },
+      include: { association: { select: { id: true, name: true, neighborhood: true } } },
+    });
+    const ownership = await prisma.ownership.findFirst({
+      where: { userId: session.user.id, isActive: true },
+      include: { unit: { include: { building: { include: { association: { select: { id: true, name: true, neighborhood: true } } } } } } },
+    });
+    association = mandate?.association ?? ownership?.unit.building.association ?? null;
   }
 
+  // Schools (active enrollments)
+  const enrollments = await prisma.inrolare.findMany({
+    where: { userId: session.user.id, status: "APPROVED" },
+    include: { clasa: { include: { scoala: { select: { id: true, name: true } } } } },
+    take: 3,
+  });
+
+  const isCetatean = civicType === "CETATEAN_S1";
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-8">
+
+      {/* Header */}
       <div>
-        <p className="text-xs font-semibold text-uat-600 uppercase tracking-widest mb-1">Welcome back</p>
-        <h1 className="text-2xl font-bold text-slate-900">{session.user.name}</h1>
-        <p className="text-slate-500 mt-0.5">{association.name}</p>
+        <p className="section-label mb-1">Bun venit</p>
+        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{session.user.name}</h1>
+        <div className="flex items-center gap-2 mt-2">
+          {civicType === "CETATEAN_S1" && (
+            <span className="badge-info gap-1.5">
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+              </svg>
+              Cetățean Sector 1
+            </span>
+          )}
+          {civicType === "PROPRIETAR" && (
+            <span className="badge-asteptare">Proprietar</span>
+          )}
+          {civicType === "NEIDENTIFICAT" && (
+            <span className="badge-respins">Neverificat via ROeID</span>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        {[
-          { href: "/documents", label: "Documents", icon: "📄", desc: "View and upload documents" },
-          { href: "/consultations", label: "Consultations", icon: "💬", desc: "Express your point of view" },
-          { href: "/certificates", label: "Certificates", icon: "🏅", desc: "Request certificates" },
-          { href: "/issues", label: "Issues", icon: "🔧", desc: "Report maintenance issues" },
-          { href: "/suppliers", label: "Suppliers", icon: "🏪", desc: "Suppliers & quotations" },
-          { href: "/financials", label: "Financial", icon: "💰", desc: "Financial reports" },
-        ].map(item => (
-          <Link key={item.href} href={item.href}
-            className="card-hover p-5 flex flex-col gap-2">
-            <span className="text-2xl">{item.icon}</span>
-            <p className="font-semibold text-slate-900">{item.label}</p>
-            <p className="text-xs text-slate-400">{item.desc}</p>
+      {/* ── Asociații ────────────────────────────────────────── */}
+      <section>
+        <div className="mb-3">
+          <p className="section-label">
+            {allAssociations.length > 1 ? `Asociațiile mele (${allAssociations.length})` : "Asociația mea"}
+          </p>
+        </div>
+
+        {/* Multi-association grid for managers with 2+ active associations */}
+        {allAssociations.length > 1 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {allAssociations.map(a => (
+              <AssociationCard
+                key={a.id}
+                id={a.id}
+                name={a.name}
+                neighborhood={a.neighborhood}
+                isActive={a.id === activeAssocId}
+                avariiOpen={a.avariiOpen}
+                sesizariOpen={a.sesizariOpen}
+              />
+            ))}
+          </div>
+        ) : association ? (
+          <Link href="/asociatia-mea"
+            className="card-hover flex gap-5 p-5 items-start">
+            <div className="w-14 h-14 rounded-2xl bg-uat-50 flex items-center justify-center flex-shrink-0"
+              style={{ boxShadow: "inset 0 1px 0 rgba(255,255,255,0.8)" }}>
+              <svg className="w-7 h-7 text-uat-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75" />
+              </svg>
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-slate-900">{association.name}</p>
+              {association.neighborhood && (
+                <p className="text-xs text-slate-400 mt-0.5">📍 {association.neighborhood}</p>
+              )}
+              <p className="text-xs text-uat-600 font-medium mt-2">
+                {isManagerRole ? "Gestionați asociația →" : "Vedeți starea și evaluarea →"}
+              </p>
+            </div>
+            <svg className="w-4 h-4 text-slate-300 flex-shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+            </svg>
           </Link>
-        ))}
-      </div>
+        ) : (
+          <div className="card p-5 flex gap-4 items-start opacity-60">
+            <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center flex-shrink-0">
+              <svg className="w-7 h-7 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75" />
+              </svg>
+            </div>
+            <div>
+              <p className="font-semibold text-slate-600 text-sm">Asociația mea</p>
+              <p className="text-xs text-slate-400 mt-1">Contul nu este conectat la nicio asociație. Contactează administratorul.</p>
+            </div>
+          </div>
+        )}
+
+        {PORTAL_EXTINS && (
+          <div className="mt-3">
+            <Link href="/scoli"
+              className="card-hover flex gap-5 p-5 items-start">
+              <div className="w-14 h-14 rounded-2xl bg-purple-50 flex items-center justify-center flex-shrink-0">
+                <svg className="w-7 h-7 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5" />
+                </svg>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-slate-900">Școlile copiilor mei</p>
+                {enrollments.length > 0 ? (
+                  <div className="mt-1 space-y-0.5">
+                    {enrollments.map(e => (
+                      <p key={e.id} className="text-xs text-slate-500 truncate">
+                        {e.clasa.scoala.name} · cl. {e.clasa.an}{e.clasa.litera} · {e.numeElev}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400 mt-0.5">Orar, clase, înrolări</p>
+                )}
+                <p className="text-xs text-purple-600 mt-2 font-medium">Orar · AI Rezumat lecții →</p>
+              </div>
+              <svg className="w-4 h-4 text-slate-300 flex-shrink-0 mt-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+            </Link>
+          </div>
+        )}
+      </section>
+
+      {/* ── Acces rapid ──────────────────────────────────────── */}
+      {association && (
+        <section>
+          <p className="section-label mb-3">Acces rapid</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
+            {[
+              { href: "/documente",  label: "Documente",  color: "text-uat-600 bg-uat-50" },
+              { href: "/consultari", label: "Consultări", color: "text-emerald-600 bg-emerald-50" },
+              { href: "/adeverinte", label: "Adeverințe", color: "text-amber-600 bg-amber-50" },
+              { href: "/avarii",     label: "Avarii",     color: "text-red-500 bg-red-50" },
+              { href: "/financiare", label: "Financiar",  color: "text-blue-600 bg-blue-50" },
+            ].map(item => (
+              <Link key={item.href} href={item.href}
+                className="card hover:-translate-y-px hover:shadow-md transition-all p-3.5 flex flex-col gap-2">
+                <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${item.color}`}>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+                  </svg>
+                </span>
+                <span className="text-sm font-semibold text-slate-700">{item.label}</span>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ── Servicii publice inline ───────────────────────────── */}
+      {PORTAL_EXTINS && <ServiciiInline />}
+
+      {/* ── Servicii naționale ────────────────────────────────── */}
+      {PORTAL_EXTINS && (
+        <section>
+          <div className="mb-3">
+            <p className="section-label">Servicii naționale</p>
+            <p className="text-xs text-slate-400 mt-1">Se deschid în tab nou · Tile-urile gri necesită domiciliu în Sector 1</p>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {EXTERNAL_SERVICES.map(svc => {
+              const available = !svc.cetateanOnly || isCetatean;
+              const tile = (
+                <div className={`rounded-xl border p-4 flex flex-col gap-2 transition-all ${
+                  available
+                    ? "bg-white border-slate-200/80 shadow-[var(--shadow-card)] hover:shadow-md hover:-translate-y-px cursor-pointer"
+                    : "bg-slate-50 border-slate-100 opacity-40 cursor-not-allowed"
+                }`}>
+                  <span className="text-2xl">{svc.icon}</span>
+                  <p className={`font-semibold text-sm leading-tight ${available ? "text-slate-900" : "text-slate-400"}`}>
+                    {svc.label}
+                  </p>
+                  <p className="text-xs text-slate-400 leading-tight">{DESCRIPTIONS[svc.descKey]}</p>
+                  {!available && (
+                    <p className="text-xs text-amber-500 font-medium mt-auto">Necesită domiciliu S1</p>
+                  )}
+                </div>
+              );
+              return available ? (
+                <a key={svc.key} href={svc.url} target="_blank" rel="noopener noreferrer" className="block">{tile}</a>
+              ) : (
+                <div key={svc.key} title="Serviciu disponibil doar pentru cetățenii cu domiciliu în Sector 1">{tile}</div>
+              );
+            })}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

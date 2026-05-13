@@ -7,6 +7,8 @@ declare module "next-auth" {
       role?: string;
       uatId?: string;
       activeAssociationId?: string;
+      civicType?: string; // CivicType: CETATEAN_S1 | PROPRIETAR | NEIDENTIFICAT
+      mustChangePassword?: boolean;
     } & DefaultSession["user"];
   }
 }
@@ -17,5 +19,7 @@ declare module "next-auth/jwt" {
     role?: string;
     uatId?: string;
     activeAssociationId?: string;
+    civicType?: string;
+    mustChangePassword?: boolean;
   }
 }

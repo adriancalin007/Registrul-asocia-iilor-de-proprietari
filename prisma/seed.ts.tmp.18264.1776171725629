@@ -1,0 +1,495 @@
+// prisma/seed.ts
+import { PrismaClient, UserRole, PeriodStatus } from "@prisma/client";
+import bcrypt from "bcryptjs";
+
+const prisma = new PrismaClient();
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function rnd(min: number, max: number) {
+  return Math.round((Math.random() * (max - min) + min) * 100) / 100;
+}
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+function slug(s: string) {
+  return s.toLowerCase().replace(/[^a-z0-9]/g, "-").replace(/-+/g, "-");
+}
+
+// ─── Static data ──────────────────────────────────────────────────────────────
+
+const RO_FIRST = ["Ion", "Maria", "Gheorghe", "Elena", "Dumitru", "Ana", "Nicolae", "Ioana", "Vasile", "Cristina",
+  "Mihai", "Adriana", "Constantin", "Daniela", "Marian", "Alina", "Florin", "Raluca", "Bogdan", "Laura"];
+const RO_LAST  = ["Popescu", "Ionescu", "Popa", "Constantin", "Gheorghe", "Stoica", "Dumitrescu", "Stan", "Radu",
+  "Marin", "Moldovan", "Dinu", "Nistor", "Andrei", "Barbu", "Toma", "Preda", "Ene", "Lazar", "Vlad"];
+
+function roName() {
+  return `${pick(RO_FIRST)} ${pick(RO_LAST)}`;
+}
+
+const ASSOCIATIONS = [
+  {
+    id: "assoc-av1",
+    fiscalCode: "21100001",
+    name: "Asociația de Proprietari Nr. 1 Aviatorilor",
+    address: "Str. Av. Aviatorilor nr. 12, Sector 1",
+    neighborhood: "Aviatorilor",
+    lat: 44.4720, lng: 26.0880,
+    buildings: [{ id: "bld-av1-1", name: "Bloc 12", staircases: 1, floors: 8, aptsPerFloor: 2, builtYear: 1972 }],
+  },
+  {
+    id: "assoc-dor1",
+    fiscalCode: "21100002",
+    name: "Asociația de Proprietari Nr. 12 Dorobanți",
+    address: "Str. Dorobanților nr. 45, Sector 1",
+    neighborhood: "Dorobanți",
+    lat: 44.4680, lng: 26.0950,
+    buildings: [{ id: "bld-dor1-1", name: "Bloc A", staircases: 2, floors: 9, aptsPerFloor: 4, builtYear: 1980 }],
+  },
+  {
+    id: "assoc-flo1",
+    fiscalCode: "21100003",
+    name: "Asociația de Proprietari Floreasca 78",
+    address: "Str. Floreasca nr. 78, Sector 1",
+    neighborhood: "Floreasca",
+    lat: 44.4760, lng: 26.1010,
+    buildings: [
+      { id: "bld-flo1-1", name: "Corp 1", staircases: 1, floors: 6, aptsPerFloor: 2, builtYear: 1968 },
+      { id: "bld-flo1-2", name: "Corp 2", staircases: 1, floors: 6, aptsPerFloor: 2, builtYear: 1969 },
+    ],
+  },
+  {
+    id: "assoc-col1",
+    fiscalCode: "21100004",
+    name: "Asociația de Proprietari Bd. Colentina 120",
+    address: "Bd. Colentina nr. 120, Sector 1",
+    neighborhood: "Colentina",
+    lat: 44.4580, lng: 26.1350,
+    buildings: [{ id: "bld-col1-1", name: "Bloc 120", staircases: 2, floors: 10, aptsPerFloor: 4, builtYear: 1985 }],
+  },
+  {
+    id: "assoc-ban1",
+    fiscalCode: "21100005",
+    name: "Asociația de Proprietari Băneasa Parc",
+    address: "Str. Băneasa nr. 15, Sector 1",
+    neighborhood: "Băneasa",
+    lat: 44.5010, lng: 26.0740,
+    buildings: [{ id: "bld-ban1-1", name: "Vila Bloc", staircases: 1, floors: 3, aptsPerFloor: 4, builtYear: 1990 }],
+  },
+  {
+    id: "assoc-vic1",
+    fiscalCode: "21100006",
+    name: "Asociația de Proprietari Calea Victoriei 200",
+    address: "Calea Victoriei nr. 200, Sector 1",
+    neighborhood: "Victoriei",
+    lat: 44.4490, lng: 26.0920,
+    buildings: [
+      { id: "bld-vic1-1", name: "Turn A", staircases: 1, floors: 12, aptsPerFloor: 4, builtYear: 1978 },
+      { id: "bld-vic1-2", name: "Turn B", staircases: 1, floors: 12, aptsPerFloor: 4, builtYear: 1979 },
+    ],
+  },
+  {
+    id: "assoc-tit1",
+    fiscalCode: "21100007",
+    name: "Asociația de Proprietari Titulescu 56",
+    address: "Bd. N. Titulescu nr. 56, Sector 1",
+    neighborhood: "Titulescu",
+    lat: 44.4530, lng: 26.0720,
+    buildings: [{ id: "bld-tit1-1", name: "Bloc T56", staircases: 1, floors: 8, aptsPerFloor: 3, builtYear: 1976 }],
+  },
+  {
+    id: "assoc-her1",
+    fiscalCode: "21100008",
+    name: "Asociația de Proprietari Herăstrău Lac",
+    address: "Str. Herăstrău nr. 33, Sector 1",
+    neighborhood: "Herăstrău",
+    lat: 44.4810, lng: 26.0830,
+    buildings: [{ id: "bld-her1-1", name: "Bloc Lac", staircases: 1, floors: 4, aptsPerFloor: 4, builtYear: 1994 }],
+  },
+  {
+    id: "assoc-rom1",
+    fiscalCode: "21100009",
+    name: "Asociația de Proprietari Piața Romană 7",
+    address: "P-ța Romană nr. 7, Sector 1",
+    neighborhood: "Piața Romană",
+    lat: 44.4450, lng: 26.0990,
+    buildings: [{ id: "bld-rom1-1", name: "Bloc Central", staircases: 3, floors: 10, aptsPerFloor: 4, builtYear: 1981 }],
+  },
+  {
+    id: "assoc-clu1",
+    fiscalCode: "21100010",
+    name: "Asociația de Proprietari Clucerului 9",
+    address: "Str. Clucerului nr. 9, Sector 1",
+    neighborhood: "Clucerului",
+    lat: 44.4650, lng: 26.0780,
+    buildings: [{ id: "bld-clu1-1", name: "Bloc 9", staircases: 1, floors: 9, aptsPerFloor: 5, builtYear: 1983 }],
+  },
+];
+
+// Expense templates per category, scaled by apartment count
+const EXPENSE_TEMPLATES = [
+  { category: "Apă și canal",         baseAmount: 800,  scale: 15,  distrib: "BY_PERSON" },
+  { category: "Energie electrică",    baseAmount: 400,  scale: 6,   distrib: "EQUAL"     },
+  { category: "Termoficare / Căldură",baseAmount: 2000, scale: 30,  distrib: "BY_AREA"   },
+  { category: "Lift",                 baseAmount: 350,  scale: 4,   distrib: "EQUAL"     },
+  { category: "Curățenie",            baseAmount: 500,  scale: 8,   distrib: "BY_SHARE"  },
+  { category: "Administrare",         baseAmount: 300,  scale: 5,   distrib: "EQUAL"     },
+  { category: "Fond reparații",       baseAmount: 600,  scale: 10,  distrib: "BY_SHARE"  },
+  { category: "Dezinsecție / Deratizare", baseAmount: 150, scale: 2, distrib: "EQUAL"   },
+];
+
+// Winter months (Nov-Feb) have heating; summer months don't
+function expensesForMonth(month: number, aptCount: number) {
+  const isWinter = month <= 2 || month >= 11;
+  return EXPENSE_TEMPLATES
+    .filter(t => t.category !== "Termoficare / Căldură" || isWinter)
+    .map(t => ({
+      category:         t.category,
+      description:      `${t.category} – ${["Ian","Feb","Mar","Apr","Mai","Iun","Iul","Aug","Sep","Oct","Nov","Dec"][month-1]} 2026`,
+      totalAmount:      Math.round((t.baseAmount + t.scale * aptCount) * (0.9 + Math.random() * 0.2)),
+      distributionType: t.distrib as "BY_SHARE" | "EQUAL" | "BY_PERSON" | "BY_AREA",
+    }));
+}
+
+// ─── Distribution calculation (mirrors genereaza route) ───────────────────────
+
+type UnitInfo = { shareRatio: number; area: number; residents: number };
+
+function distributeExpense(
+  amount: number,
+  distrib: string,
+  unit: UnitInfo,
+  totals: { shareRatio: number; area: number; residents: number; unitCount: number },
+): number {
+  if (distrib === "BY_SHARE")  return totals.shareRatio > 0 ? (unit.shareRatio / totals.shareRatio) * amount : amount / totals.unitCount;
+  if (distrib === "EQUAL")     return amount / totals.unitCount;
+  if (distrib === "BY_PERSON") return totals.residents > 0  ? (unit.residents  / totals.residents)  * amount : amount / totals.unitCount;
+  if (distrib === "BY_AREA")   return totals.area > 0       ? (unit.area       / totals.area)        * amount : amount / totals.unitCount;
+  return amount / totals.unitCount;
+}
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+
+async function main() {
+  console.log("🌱 Seeding database…");
+
+  // ── UAT ──────────────────────────────────────────────────────────────────────
+  const uat = await prisma.uAT.upsert({
+    where: { sirutaCode: "179141" },
+    update: {},
+    create: {
+      name: "Sectorul 1 al Municipiului București",
+      county: "București",
+      sirutaCode: "179141",
+      email: "contact@primaria1.ro",
+      website: "https://www.primaria1.ro",
+    },
+  });
+  await prisma.uATConfig.upsert({
+    where: { uatId: uat.id },
+    update: {},
+    create: {
+      uatId: uat.id,
+      documentCategories: ["Regulament intern", "Proces-verbal AG", "Contract", "Raport financiar", "Buget", "Altele"],
+      certificateTypes: ["PAYMENTS_UP_TO_DATE", "OWNERSHIP", "RESERVE_FUND", "GENERAL"],
+    },
+  });
+  console.log(`✅ UAT: ${uat.name}`);
+
+  // ── System accounts ───────────────────────────────────────────────────────────
+  const hash = (pw: string) => bcrypt.hash(pw, 10);
+
+  const superAdmin = await prisma.user.upsert({
+    where: { email: "superadmin@bloc-uat.local" },
+    update: {},
+    create: { email: "superadmin@bloc-uat.local", fullName: "Super Administrator", passwordHash: await hash("SuperAdmin123!"), emailVerified: true, isActive: true },
+  });
+  await prisma.superAdmin.upsert({ where: { userId: superAdmin.id }, update: {}, create: { userId: superAdmin.id } });
+
+  const operator = await prisma.user.upsert({
+    where: { email: "operator@sector1.ro" },
+    update: {},
+    create: { email: "operator@sector1.ro", fullName: "Mihaela Dumitrescu", passwordHash: await hash("Operator123!"), emailVerified: true, isActive: true },
+  });
+  await prisma.uATOperator.upsert({ where: { userId: operator.id }, update: {}, create: { userId: operator.id, uatId: uat.id, jobTitle: "Coordonator platformă" } });
+
+  const demoManager = await prisma.user.upsert({
+    where: { email: "manager@demo.ro" },
+    update: {},
+    create: {
+      email: "manager@demo.ro",
+      fullName: "Manager Demo",
+      passwordHash: await hash("Manager123!"),
+      emailVerified: true,
+      isActive: true,
+    },
+  });
+
+  console.log("✅ Conturi sistem create");
+
+  // ── 10 Associations ───────────────────────────────────────────────────────────
+  for (const a of ASSOCIATIONS) {
+    const association = await prisma.association.upsert({
+      where: { fiscalCode: a.fiscalCode },
+      update: {},
+      create: {
+        id: a.id,
+        uatId: uat.id,
+        name: a.name,
+        fiscalCode: a.fiscalCode,
+        address: a.address,
+        neighborhood: a.neighborhood,
+        status: "ACTIVE",
+        validatedAt: new Date("2025-01-15"),
+        validatedBy: operator.id,
+        latitude: a.lat,
+        longitude: a.lng,
+        geocodedAt: new Date("2025-01-15"),
+      },
+    });
+
+    // Manager
+    const mgrEmail = `manager.${slug(a.neighborhood)}@demo.ro`;
+    const mgrUser = await prisma.user.upsert({
+      where: { email: mgrEmail },
+      update: {},
+      create: {
+        email: mgrEmail,
+        fullName: roName(),
+        passwordHash: await hash("Manager123!"),
+        emailVerified: true,
+        isActive: true,
+      },
+    });
+    await prisma.mandate.upsert({
+      where: { id: `mnd-${a.id}` },
+      update: {},
+      create: {
+        id:            `mnd-${a.id}`,
+        associationId: association.id,
+        userId:        mgrUser.id,
+        role:          UserRole.MANAGER,
+        startDate:     new Date("2025-01-01"),
+        isActive:      true,
+      },
+    });
+
+    // Buildings + units
+    const allUnitsInfo: { unitId: string; shareRatio: number; area: number; residents: number; ownerships: string[] }[] = [];
+
+    for (const b of a.buildings) {
+      const building = await prisma.building.upsert({
+        where: { id: b.id },
+        update: {},
+        create: {
+          id:            b.id,
+          associationId: association.id,
+          name:          b.name,
+          address:       a.address,
+          staircaseCount: b.staircases,
+          unitCount:     b.floors * b.aptsPerFloor,
+          builtYear:     b.builtYear,
+        },
+      });
+
+      const AREA_TYPES = [35, 42, 55, 65, 75, 82, 90, 104];
+      const totalUnits = b.floors * b.aptsPerFloor;
+      const unitAreas: number[] = Array.from({ length: totalUnits }, (_, i) => AREA_TYPES[i % AREA_TYPES.length]);
+      const totalArea = unitAreas.reduce((s, a) => s + a, 0);
+
+      for (let u = 0; u < totalUnits; u++) {
+        const floor   = Math.floor(u / b.aptsPerFloor);
+        const aptNum  = `${floor === 0 ? "P" : floor}${String(u % b.aptsPerFloor + 1).padStart(2,"0")}`;
+        const area    = unitAreas[u];
+        const share   = Math.round((area / totalArea) * 10000) / 100; // percentage with 2 decimals
+        const unitId  = `${b.id}-u${u + 1}`;
+
+        const unit = await prisma.unit.upsert({
+          where: { id: unitId },
+          update: {},
+          create: {
+            id:         unitId,
+            buildingId: building.id,
+            number:     aptNum,
+            floor:      floor,
+            area:       area,
+            shareRatio: share,
+            residents:  pick([1, 1, 2, 2, 2, 3, 3, 4]),
+          },
+        });
+
+        // Create owner for ~70% of units
+        const ownershipIds: string[] = [];
+        if (Math.random() < 0.70) {
+          const ownerEmail = `owner.${slug(a.neighborhood)}.${u + 1}@demo.ro`;
+          const ownerUser = await prisma.user.upsert({
+            where: { email: ownerEmail },
+            update: {},
+            create: {
+              email:        ownerEmail,
+              fullName:     roName(),
+              passwordHash: await hash("Owner123!"),
+              emailVerified: true,
+              isActive:     true,
+            },
+          });
+          const ownershipId = `own-${unitId}`;
+          await prisma.ownership.upsert({
+            where: { id: ownershipId },
+            update: {},
+            create: {
+              id:        ownershipId,
+              unitId:    unit.id,
+              userId:    ownerUser.id,
+              type:      "OWNER",
+              startDate: new Date("2022-01-01"),
+              isActive:  true,
+            },
+          });
+          ownershipIds.push(ownershipId);
+        }
+
+        allUnitsInfo.push({ unitId: unit.id, shareRatio: share, area, residents: unit.residents ?? 2, ownerships: ownershipIds });
+      }
+    }
+
+    // Totals for distribution
+    const totalShareRatio = allUnitsInfo.reduce((s, u) => s + u.shareRatio, 0);
+    const totalArea       = allUnitsInfo.reduce((s, u) => s + u.area,       0);
+    const totalResidents  = allUnitsInfo.reduce((s, u) => s + u.residents,  0);
+    const unitCount       = allUnitsInfo.length;
+    const totals          = { shareRatio: totalShareRatio, area: totalArea, residents: totalResidents, unitCount };
+
+    // Expense periods: Jan–Mar 2026 FINALIZED, Apr 2026 DRAFT
+    const MONTHS: { month: number; year: number; status: PeriodStatus }[] = [
+      { month: 1, year: 2026, status: "FINALIZED" },
+      { month: 2, year: 2026, status: "FINALIZED" },
+      { month: 3, year: 2026, status: "FINALIZED" },
+      { month: 4, year: 2026, status: "DRAFT"     },
+    ];
+
+    for (const { month, year, status } of MONTHS) {
+      const periodId = `per-${a.id}-${year}-${month}`;
+      const period = await prisma.expensePeriod.upsert({
+        where:  { associationId_year_month: { associationId: association.id, year, month } },
+        update: {},
+        create: {
+          id:            periodId,
+          associationId: association.id,
+          year,
+          month,
+          status,
+          createdBy:     mgrUser.id,
+          generatedAt:   status === "FINALIZED" ? new Date(`2026-0${month}-28`) : null,
+        },
+      });
+
+      const expenses = expensesForMonth(month, unitCount);
+      const expenseRecords: { id: string; totalAmount: number; distributionType: string }[] = [];
+
+      for (let ei = 0; ei < expenses.length; ei++) {
+        const exp = expenses[ei];
+        const expId = `exp-${a.id}-${year}-${month}-${ei}`;
+        const created = await prisma.expense.upsert({
+          where:  { id: expId },
+          update: {},
+          create: {
+            id:               expId,
+            periodId:         period.id,
+            category:         exp.category,
+            description:      exp.description,
+            totalAmount:      exp.totalAmount,
+            distributionType: exp.distributionType,
+          },
+        });
+        expenseRecords.push({ id: created.id, totalAmount: created.totalAmount, distributionType: created.distributionType });
+      }
+
+      // Generate payment items for FINALIZED periods (only ownerships that exist)
+      if (status === "FINALIZED") {
+        // Delete any existing payment items
+        await prisma.paymentItem.deleteMany({ where: { periodId: period.id } });
+
+        // shareMap: ownershipId → amount
+        const shareMap = new Map<string, number>();
+        for (const u of allUnitsInfo) {
+          for (const owId of u.ownerships) {
+            shareMap.set(owId, 0);
+          }
+        }
+
+        for (const exp of expenseRecords) {
+          for (const u of allUnitsInfo) {
+            if (u.ownerships.length === 0) continue;
+            const unitShare = distributeExpense(exp.totalAmount, exp.distributionType, u, totals);
+            const perOwner = unitShare / u.ownerships.length;
+            for (const owId of u.ownerships) {
+              shareMap.set(owId, (shareMap.get(owId) ?? 0) + perOwner);
+            }
+          }
+        }
+
+        const payItems: { ownershipId: string; unitAmount: number }[] = [];
+        for (const [ownershipId, amount] of shareMap.entries()) {
+          payItems.push({ ownershipId, unitAmount: Math.round(amount * 100) / 100 });
+        }
+
+        // Simulate some payments (paid, partial, overdue)
+        const STATUSES: ("PAID" | "PARTIAL" | "PENDING" | "OVERDUE")[] = ["PAID", "PAID", "PAID", "PARTIAL", "PENDING", "OVERDUE"];
+        for (const item of payItems) {
+          const st = pick(STATUSES);
+          const paidAmount =
+            st === "PAID"    ? item.unitAmount :
+            st === "PARTIAL" ? Math.round(item.unitAmount * rnd(0.3, 0.8) * 100) / 100 :
+            0;
+
+          await prisma.paymentItem.create({
+            data: {
+              periodId:     period.id,
+              ownershipId:  item.ownershipId,
+              unitAmount:   item.unitAmount,
+              previousDebt: 0,
+              totalDue:     item.unitAmount,
+              paidAmount,
+              paidAt:       paidAmount === item.unitAmount ? new Date(`2026-0${month < 10 ? "0"+month : month}-15`) : null,
+              status:       st,
+            },
+          });
+        }
+      }
+    }
+
+    const aptCount = allUnitsInfo.length;
+    console.log(`✅ ${a.name} — ${aptCount} apartamente`);
+  }
+
+  // Demo manager: mandates for 7 associations to test the association switcher
+  const DEMO_MGR_ASSOCS = ["assoc-av1", "assoc-dor1", "assoc-flo1", "assoc-col1", "assoc-ban1", "assoc-tit1", "assoc-her1"];
+  for (const assocId of DEMO_MGR_ASSOCS) {
+    await prisma.mandate.upsert({
+      where:  { id: `mnd-demo-${assocId}` },
+      update: {},
+      create: {
+        id:            `mnd-demo-${assocId}`,
+        associationId: assocId,
+        userId:        demoManager.id,
+        role:          UserRole.MANAGER,
+        startDate:     new Date("2025-01-01"),
+        isActive:      true,
+      },
+    });
+  }
+  console.log(`✅ manager@demo.ro — ${DEMO_MGR_ASSOCS.length} mandate active`);
+
+  console.log("\n🎉 Seed complet!\n");
+  console.log("Conturi de test:");
+  console.log("  superadmin@bloc-uat.local          / SuperAdmin123!");
+  console.log("  operator@sector1.ro               / Operator123!");
+  console.log("  manager@demo.ro                   / Manager123!  (7 asociații)");
+  console.log("  manager.<cartier>@demo.ro         / Manager123!");
+  console.log("  owner.<cartier>.<nr>@demo.ro      / Owner123!");
+}
+
+main()
+  .catch(e => { console.error("❌ Seed error:", e); process.exit(1); })
+  .finally(async () => { await prisma.$disconnect(); });

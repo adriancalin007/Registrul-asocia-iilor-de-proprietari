@@ -1,0 +1,1410 @@
+// ============================================================
+// BLOC-UAT — Prisma Schema
+// English naming, best practices
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  OWNER
+  MANAGER
+  BOARD_PRESIDENT
+  AUDITOR
+  SUPPLIER
+  UAT_OPERATOR
+  POLICE_OPERATOR
+  SUPER_ADMIN
+}
+
+enum SesizareRouting {
+  UAT_GENERAL
+  POLICE
+}
+
+enum SesizareStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum DocumentOficialType {
+  CONTRACT_MANDAT
+  STATUT
+  CI_PRESEDINTE
+  CI_ADMINISTRATOR
+  CONTRACT_ADMINISTRARE
+  HOT_AGA_PRESEDINTE
+  HOT_AGA_ADMINISTRATOR
+  HOT_AGA_CENZOR
+  REGULAMENT_INTERN
+  CERTIFICAT_FISCAL
+  ALTE
+}
+
+enum DocumentOficialStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  ARCHIVED
+}
+
+enum SituatieFinanciaraStatus {
+  DRAFT
+  SUBMITTED
+  ACCEPTED
+  REJECTED
+}
+
+enum SituatieFinanciaraType {
+  BILANT_ANUAL
+  EXECUTIE_BUGETARA
+  SITUATIE_CHELTUIELI
+  ALTELE
+}
+
+enum CivicType {
+  CETATEAN_S1    // CNP verificat + domiciliu Sector 1
+  PROPRIETAR     // CNP verificat + proprietate în S1, domiciliu altă parte
+  NEIDENTIFICAT  // neautentificat via ROeID
+}
+
+enum SchoolType {
+  GENERALA     // cls. I-VIII (scoala generala / gimnaziu)
+  LICEU        // cls. IX-XII
+  COMBINATA    // cls. I-XII (structura completa)
+}
+
+enum EnrollmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AssociationStatus {
+  PENDING           // submitted, not yet opened
+  UNDER_REVIEW      // operator opened the file
+  NEEDS_COMPLETION  // missing documents, association can resubmit
+  ACTIVE
+  SUSPENDED
+  REJECTED          // fraud/false data — irreversible
+  INACTIVE
+}
+
+enum DocumentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  EXPIRED
+}
+
+enum ConsultationStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+enum IssueStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum RFQStatus {
+  DRAFT
+  PUBLISHED
+  UNDER_EVALUATION
+  AWARDED
+  CANCELLED
+  ARCHIVED
+}
+
+enum QuoteStatus {
+  SUBMITTED
+  UNDER_EVALUATION
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+}
+
+enum CertificateStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  ISSUED
+  EXPIRED
+}
+
+enum CertificateType {
+  PAYMENTS_UP_TO_DATE
+  OWNERSHIP
+  RESERVE_FUND
+  GENERAL
+}
+
+enum SupplierStatus {
+  PENDING
+  VERIFIED
+  SUSPENDED
+  REJECTED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  UNPROCESSED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  CREATE
+  UPDATE
+  DELETE
+  VIEW
+  APPROVE
+  REJECT
+  CONTEXT_SWITCH
+  EXPORT
+  GENERATE_DOCUMENT
+}
+
+enum TipUnitate {
+  APARTAMENT
+  GARAJ
+  BOXA
+  SPATIU_COMERCIAL
+  PARCARE
+}
+
+enum DestinatieUnitate {
+  REZIDENTIALA
+  NEREZIDENTIALA
+  MIXTA
+}
+
+enum ZonaFiscala {
+  A
+  B
+  C
+  D
+}
+
+enum TipActIdentitate {
+  CI
+  BI
+  PASAPORT
+}
+
+enum TipAnexa {
+  BOXA
+  GARAJ
+  PARCARE
+  PIVNITA
+  MANSARDA
+}
+
+enum TipDobandire {
+  CUMPARARE
+  MOSTENIRE
+  DONATIE
+  PARTAJ
+  ALTA
+}
+
+// ─── RBAC dinamic ─────────────────────────────────────────────────────────────
+
+enum AccountType {
+  CIVIL     // CITIZEN, OWNER
+  OFFICIAL  // OPERATOR, SUPERADMIN, roluri custom
+}
+
+enum UserStatus {
+  ACTIVE
+  DEACTIVATED
+  PENDING_MERGE   // în așteptarea confirmării merge de superadmin
+}
+
+// ============================================================
+// UAT (Unitate Administrativ-Teritoriala)
+// ============================================================
+
+model UAT {
+  id          String   @id @default(cuid())
+  name        String
+  county      String
+  sirutaCode  String   @unique
+  email       String?
+  phone       String?
+  website     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  associations   Association[]
+  operators      UATOperator[]
+  suppliers      Supplier[]
+  config              UATConfig?
+  auditLogs           UATAuditLog[]
+  allowedEmailDomains Json     @default("[]")  // pregătire 2FA: ex. ["primariasector1.ro"]
+  scoli               Scoala[]
+}
+
+model UATConfig {
+  id                          String   @id @default(cuid())
+  uatId                       String   @unique
+  uat                         UAT      @relation(fields: [uatId], references: [id])
+  minConsultationQuorum       Int      @default(50)
+  minConsultationDays         Int      @default(7)
+  maxConsultationDays         Int      @default(30)
+  agmNoticeRequiredDays       Int      @default(10)
+  documentCategories          Json     @default("[]")
+  certificateTypes            Json     @default("[]")
+  supplierVerificationRules   Json     @default("{}")
+  updatedAt                   DateTime @updatedAt
+}
+
+// ============================================================
+// USERS
+// ============================================================
+
+model User {
+  id                  String    @id @default(cuid())
+  email               String    @unique
+  firstName           String?
+  lastName            String?
+  fullName            String
+  phone               String?
+  cnp                 String?   @unique // cod numeric personal — unic per persoană fizică
+  passwordHash        String?
+  emailVerified       Boolean   @default(false)
+  mfaEnabled          Boolean   @default(false)
+  mfaSecret           String?
+  isActive            Boolean   @default(true)
+  mustChangePassword  Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  lastLoginAt         DateTime?
+
+  // NextAuth
+  accounts            OIDCAccount[]
+  sessions            Session[]
+
+  // Role contexts
+  ownerships          Ownership[]
+  mandates            Mandate[]
+  supplierAccount     Supplier?
+  uatOperatorAccount  UATOperator?
+  superAdminAccount   SuperAdmin?
+
+  notifications       Notification[]
+  auditActions        AuditLog[]
+  uatAuditActions     UATAuditLog[]
+  supplierRatings     SupplierRating[]
+
+  // Profil civic (ROeID integration ready)
+  civicType           CivicType  @default(NEIDENTIFICAT)
+  domiciliuSector     Int?       // 1-6 (sectoare Buc.), 0 = alt județ/localitate
+  domiciliuAdresa     String?    // adresă completă din ROeID
+  cnpVerifiedAt       DateTime?  // timestamp verificare ROeID
+
+  // Relații Școli
+  inrolari            Inrolare[]
+  scoalaMandateUser   ScoalaMandat[]
+
+  // Sesizări
+  sesizariSubmise     Sesizare[]          @relation("SesizareSubmitter")
+  sesizariRaspunsuri  Sesizare[]          @relation("SesizareResponder")
+
+  // Registru proprietari DITL (opțional — se leagă prin CNP la înregistrare)
+  persoana            Persoana?
+
+  // Documente oficiale
+  documenteOficiale   DocumentOficial[]   @relation("DocOficialUploader")
+
+  // Situații financiare
+  situatiiSubmise     SituatieFinanciara[] @relation("SituatieSubmitter")
+
+  // RBAC dinamic
+  status              UserStatus   @default(ACTIVE)
+  accountType         AccountType  @default(CIVIL)
+  createdByAdminId    String?      // ID superadmin pentru conturi OFFICIAL
+  rbacRoles           UserRoleAssignment[]
+}
+
+model OIDCAccount {
+  id                String  @id @default(cuid())
+  userId            String
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type              String
+  provider          String
+  providerAccountId String
+  refreshToken      String? @db.Text
+  accessToken       String? @db.Text
+  expiresAt         Int?
+  tokenType         String?
+  scope             String?
+  idToken           String? @db.Text
+  sessionState      String?
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expires      DateTime
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model UATOperator {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id])
+  uatId        String
+  uat          UAT      @relation(fields: [uatId], references: [id])
+  jobTitle     String?
+  operatorType String   @default("GENERAL") // GENERAL | POLICE
+  createdAt    DateTime @default(now())
+}
+
+model SuperAdmin {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+}
+
+// ============================================================
+// ASSOCIATION
+// ============================================================
+
+model Association {
+  id                String            @id @default(cuid())
+  uatId             String
+  uat               UAT               @relation(fields: [uatId], references: [id])
+  name              String
+  fiscalCode        String?           @unique
+  address           String
+  neighborhood      String?
+  zone              String?
+  status            AssociationStatus @default(PENDING)
+  // Onboarding documents (stored as JSON with links)
+  registrationDocs  Json              @default("{}")
+  rejectionReason   String?
+  validatedAt       DateTime?
+  validatedBy       String?
+  // Geocoding
+  latitude          Float?
+  longitude         Float?
+  geocodedAt        DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  buildings           Building[]
+  mandates            Mandate[]
+  documents           Document[]
+  consultations       Consultation[]
+  notifications       Notification[]
+  issues              Issue[]
+  rfqs                RFQ[]
+  certificates        Certificate[]
+  agmSessions         AGMSession[]
+  auditLogs           AuditLog[]
+  completionRounds    CompletionRound[]
+  expensePeriods      ExpensePeriod[]
+  invoices            Invoice[]
+  sesizari            Sesizare[]
+  documenteOficiale   DocumentOficial[]
+  situatiiFinanciare  SituatieFinanciara[]
+}
+
+// ============================================================
+// COMPLETION ROUNDS (dosar resubmission flow)
+// ============================================================
+
+model CompletionRound {
+  id                   String      @id @default(cuid())
+  associationId        String
+  association          Association @relation(fields: [associationId], references: [id])
+  roundNumber          Int
+  requestedBy          String      // userId of UAT operator
+  requestedAt          DateTime    @default(now())
+  missingItems         String      @db.Text
+  completedAt          DateTime?
+  newDocuments         Json        @default("[]") // [{label, url}]
+  associationNotes     String?     @db.Text
+  completionToken      String      @unique @default(cuid())
+  tokenExpiresAt       DateTime
+  isCompleted          Boolean     @default(false)
+
+  @@index([associationId])
+}
+
+// ============================================================
+// BUILDING STRUCTURE
+// ============================================================
+
+model Building {
+  id              String      @id @default(cuid())
+  associationId   String
+  association     Association @relation(fields: [associationId], references: [id])
+  name            String
+  address         String
+  staircaseCount  Int         @default(1)
+  unitCount       Int         @default(0)
+  builtYear       Int?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  units           Unit[]
+}
+
+model Unit {
+  id           String      @id @default(cuid())
+  buildingId   String
+  building     Building    @relation(fields: [buildingId], references: [id])
+  number       String
+  floor        Int?
+  area         Float?
+  rooms        Int?        // număr camere: 1, 2, 3, 4+
+  shareRatio   Float?
+  residents    Int?        // manual override for BY_PERSON distribution; if null, count from Resident records
+  heatingType  HeatingType @default(NONE)
+  isCompanyHQ      Boolean     @default(false)  // apartamentul este sediu social de firmă
+  companyName      String?
+  companyCUI       String?
+  customAttributes Json?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  // ── Câmpuri cadastrale DITL (import decizii de impunere) ──
+  tipUnitate              TipUnitate?
+  destinatie              DestinatieUnitate?
+  numarCadastral          String?
+  numarMatricolaFiscala   String?       // emis de DITL; unique per clădire
+  zonaFiscala             ZonaFiscala?
+  suprafataUtila          Decimal?      @db.Decimal(8, 2)
+  suprafataConstructita   Decimal?      @db.Decimal(8, 2)
+  dataConstructie         DateTime?
+  structura               String?       // text liber: "cadre beton armat", "cărămidă arsă" etc.
+  areInstalatii           Boolean?
+
+  ownerships       Ownership[]
+  meterReadings    MeterReading[]
+  carteaImobilului Resident[]
+  detineri         Detinere[]
+  anexe            Anexa[]
+
+  @@unique([buildingId, numarMatricolaFiscala])
+}
+
+model Ownership {
+  id          String    @id @default(cuid())
+  unitId      String
+  unit        Unit      @relation(fields: [unitId], references: [id])
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  type        String    @default("OWNER") // OWNER | TENANT | CO_OWNER
+  startDate   DateTime
+  endDate     DateTime?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  consultationResponses ConsultationResponse[]
+  certificates          Certificate[]
+  paymentItems          PaymentItem[]
+}
+
+// ============================================================
+// MANDATES (Manager, Board President, Auditor)
+// ============================================================
+
+model Mandate {
+  id              String      @id @default(cuid())
+  associationId   String
+  association     Association @relation(fields: [associationId], references: [id])
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+  role            UserRole
+  startDate       DateTime
+  expiresAt       DateTime?
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([userId, associationId, role])
+}
+
+// ============================================================
+// DOCUMENTS
+// ============================================================
+
+model Document {
+  id              String         @id @default(cuid())
+  associationId   String
+  association     Association    @relation(fields: [associationId], references: [id])
+  title           String
+  category        String
+  folder          String?        // optional grouping / folder name
+  description     String?
+  fileUrl         String
+  fileSize        Int?
+  mimeType        String?
+  version         Int            @default(1)
+  status          DocumentStatus @default(DRAFT)
+  isPublic        Boolean        @default(false)
+  documentDate    DateTime?      // the actual date of the document (not upload date)
+  expiresAt       DateTime?
+  uploadedBy      String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  approval        DocumentApproval?
+  auditLogs       AuditLog[]
+}
+
+model DocumentApproval {
+  id          String   @id @default(cuid())
+  documentId  String   @unique
+  document    Document @relation(fields: [documentId], references: [id])
+  approvedBy  String
+  status      String   // APPROVED | REJECTED
+  notes       String?
+  approvedAt  DateTime @default(now())
+}
+
+// ============================================================
+// CONSULTATIONS
+// ============================================================
+
+model Consultation {
+  id              String             @id @default(cuid())
+  associationId   String
+  association     Association        @relation(fields: [associationId], references: [id])
+  title           String
+  description     String?            @db.Text
+  options         Json               // ["Yes", "No", "Abstain"]
+  status          ConsultationStatus @default(DRAFT)
+  startsAt        DateTime
+  expiresAt       DateTime
+  initiatedBy     String
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  responses       ConsultationResponse[]
+  auditLogs       AuditLog[]
+}
+
+model ConsultationResponse {
+  id            String       @id @default(cuid())
+  consultationId String
+  consultation  Consultation @relation(fields: [consultationId], references: [id])
+  ownershipId   String
+  ownership     Ownership    @relation(fields: [ownershipId], references: [id])
+  optionIndex   Int
+  respondedAt   DateTime     @default(now())
+
+  @@unique([consultationId, ownershipId])
+}
+
+// ============================================================
+// CERTIFICATES
+// ============================================================
+
+model Certificate {
+  id            String            @id @default(cuid())
+  associationId String
+  association   Association       @relation(fields: [associationId], references: [id])
+  ownershipId   String
+  ownership     Ownership         @relation(fields: [ownershipId], references: [id])
+  type          CertificateType
+  status        CertificateStatus @default(REQUESTED)
+  requestedAt   DateTime          @default(now())
+  issuedAt      DateTime?
+  expiresAt     DateTime?
+  pdfUrl        String?
+  approvedBy    String?
+  notes         String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  auditLogs     AuditLog[]
+}
+
+// ============================================================
+// ISSUES & MAINTENANCE
+// ============================================================
+
+model Issue {
+  id               String      @id @default(cuid())
+  associationId    String
+  association      Association @relation(fields: [associationId], references: [id])
+  ticketNumber     String      @unique
+  category         String
+  location         String
+  description      String      @db.Text
+  photos           Json        @default("[]")
+  status           IssueStatus @default(OPEN)
+  reportedBy       String
+  assignedTo       String?
+  completionReport String?
+  closedAt         DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  statusHistory    IssueStatusHistory[]
+  rfq              RFQ?
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+}
+
+model IssueStatusHistory {
+  id          String      @id @default(cuid())
+  issueId     String
+  issue       Issue       @relation(fields: [issueId], references: [id])
+  fromStatus  IssueStatus
+  toStatus    IssueStatus
+  notes       String?
+  changedBy   String
+  changedAt   DateTime    @default(now())
+}
+
+// ============================================================
+// SUPPLIERS
+// ============================================================
+
+model Supplier {
+  id                  String         @id @default(cuid())
+  uatId               String
+  uat                 UAT            @relation(fields: [uatId], references: [id])
+  userId              String?        @unique
+  user                User?          @relation(fields: [userId], references: [id])
+  companyName         String
+  fiscalCode          String         @unique
+  address             String?
+  email               String
+  phone               String?
+  serviceCategories   Json           @default("[]")
+  serviceAreas        Json           @default("[]")
+  qualificationDocs   Json           @default("[]")
+  status              SupplierStatus @default(PENDING)
+  verifiedBy          String?
+  verifiedAt          DateTime?
+  rejectionReason     String?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  quotes              Quote[]
+  ratings             SupplierRating[]
+  invoices            Invoice[]
+}
+
+// ============================================================
+// SUPPLIER RATINGS
+// ============================================================
+
+model SupplierRating {
+  id          String   @id @default(cuid())
+  supplierId  String
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+  ratedBy     String
+  user        User     @relation(fields: [ratedBy], references: [id])
+  raterRole   UserRole // MANAGER | BOARD_PRESIDENT | OWNER
+  score       Int      // 1–5
+  comment     String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([supplierId, ratedBy])
+  @@index([supplierId])
+}
+
+// ============================================================
+// RFQ (Request for Quotation)
+// ============================================================
+
+model RFQ {
+  id                String    @id @default(cuid())
+  associationId     String
+  association       Association @relation(fields: [associationId], references: [id])
+  issueId           String?   @unique
+  issue             Issue?    @relation(fields: [issueId], references: [id])
+  title             String
+  description       String    @db.Text
+  categories        Json      @default("[]")
+  photos            Json      @default("[]")
+  estimatedValue    Float?
+  quotingDeadline   DateTime
+  status            RFQStatus @default(DRAFT)
+  currentVersion    Int       @default(1)
+  publishedBy       String
+  awardedSupplierId String?
+  awardedAt         DateTime?
+  awardReason       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  versions          RFQVersion[]
+  quotes            Quote[]
+  auditLogs         AuditLog[]
+}
+
+model RFQVersion {
+  id              String   @id @default(cuid())
+  rfqId           String
+  rfq             RFQ      @relation(fields: [rfqId], references: [id])
+  versionNumber   Int
+  snapshot        Json
+  changedBy       String
+  changeReason    String?
+  createdAt       DateTime @default(now())
+
+  @@unique([rfqId, versionNumber])
+}
+
+model Quote {
+  id                 String      @id @default(cuid())
+  rfqId              String
+  rfq                RFQ         @relation(fields: [rfqId], references: [id])
+  supplierId         String
+  supplier           Supplier    @relation(fields: [supplierId], references: [id])
+  price              Float
+  leadDays           Int
+  requiresSiteVisit  Boolean     @default(false)
+  siteVisitNotes     String?     @db.Text
+  description        String?     @db.Text
+  documents          Json        @default("[]")
+  status             QuoteStatus @default(SUBMITTED)
+  submittedAt        DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  @@unique([rfqId, supplierId])
+}
+
+// ============================================================
+// AGM (Assembly General Meeting)
+// ============================================================
+
+model AGMSession {
+  id              String      @id @default(cuid())
+  associationId   String
+  association     Association @relation(fields: [associationId], references: [id])
+  scheduledAt     DateTime
+  location        String?
+  agenda          Json        @default("[]")
+  supportDocs     Json        @default("[]")
+  minutesUrl      String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  attendance      AGMAttendance[]
+  proxies         AGMProxy[]
+  resolutions     AGMResolution[]
+}
+
+model AGMAttendance {
+  id              String     @id @default(cuid())
+  sessionId       String
+  session         AGMSession @relation(fields: [sessionId], references: [id])
+  userId          String
+  shareRatio      Float?
+  attendanceType  String     @default("IN_PERSON") // IN_PERSON | ONLINE | PROXY
+  isPresent       Boolean    @default(true)
+  recordedAt      DateTime   @default(now())
+}
+
+model AGMProxy {
+  id          String     @id @default(cuid())
+  sessionId   String
+  session     AGMSession @relation(fields: [sessionId], references: [id])
+  principalId String     // user granting proxy
+  agentId     String     // user receiving proxy
+  scope       String?
+  proxyDocUrl String?
+  createdAt   DateTime   @default(now())
+}
+
+model AGMResolution {
+  id              String     @id @default(cuid())
+  sessionId       String
+  session         AGMSession @relation(fields: [sessionId], references: [id])
+  number          String
+  subject         String
+  archivedDocUrl  String     // offline-adopted document
+  archivedBy      String
+  archivedAt      DateTime   @default(now())
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+model Notification {
+  id              String              @id @default(cuid())
+  associationId   String?
+  association     Association?        @relation(fields: [associationId], references: [id])
+  recipientId     String
+  recipient       User                @relation(fields: [recipientId], references: [id])
+  issueId         String?
+  issue           Issue?              @relation(fields: [issueId], references: [id])
+  channel         NotificationChannel
+  status          NotificationStatus  @default(UNPROCESSED)
+  title           String
+  body            String              @db.Text
+  readAt          DateTime?
+  scheduledFor    DateTime            @default(now())
+  createdAt       DateTime            @default(now())
+
+  @@index([recipientId, status])
+}
+
+// ============================================================
+// AUDIT LOGS
+// ============================================================
+
+model AuditLog {
+  id              String      @id @default(cuid())
+  associationId   String?
+  association     Association? @relation(fields: [associationId], references: [id])
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+  role            UserRole
+  action          AuditAction
+  resource        String
+  resourceId      String?
+  metadata        Json        @default("{}")
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime    @default(now())
+
+  documentId      String?
+  document        Document?   @relation(fields: [documentId], references: [id])
+  consultationId  String?
+  consultation    Consultation? @relation(fields: [consultationId], references: [id])
+  issueId         String?
+  issue           Issue?      @relation(fields: [issueId], references: [id])
+  rfqId           String?
+  rfq             RFQ?        @relation(fields: [rfqId], references: [id])
+  certificateId   String?
+  certificate     Certificate? @relation(fields: [certificateId], references: [id])
+
+  @@index([associationId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model UATAuditLog {
+  id          String      @id @default(cuid())
+  uatId       String
+  uat         UAT         @relation(fields: [uatId], references: [id])
+  userId      String
+  user        User        @relation(fields: [userId], references: [id])
+  action      AuditAction
+  resource    String
+  resourceId  String?
+  metadata    Json        @default("{}")
+  ipAddress   String?
+  createdAt   DateTime    @default(now())
+
+  @@index([uatId, createdAt])
+}
+
+// ============================================================
+// CARTEA IMOBILULUI (building resident register)
+// ============================================================
+
+enum ResidentType {
+  OWNER           // proprietar care locuiește
+  CO_OWNER        // coproprietar
+  TENANT          // chiriaș
+  FAMILY_MEMBER   // membru de familie
+  MINOR           // minor
+  CARETAKER       // îngrijitor / bonă
+  EMPLOYEE        // angajat al firmei cu sediu social la adresă
+  OTHER
+}
+
+model Resident {
+  id        String       @id @default(cuid())
+  unitId    String
+  unit      Unit         @relation(fields: [unitId], references: [id])
+  fullName  String
+  cnp       String?      // cod numeric personal (opțional, sensibil)
+  type      ResidentType @default(OWNER)
+  startDate DateTime
+  endDate   DateTime?
+  isActive  Boolean      @default(true)
+  notes     String?
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([unitId])
+}
+
+// ============================================================
+// FINANCIAL MANAGEMENT (e-bloc equivalent)
+// ============================================================
+
+enum PeriodStatus {
+  DRAFT       // expenses being entered
+  FINALIZED   // payment list generated
+  ARCHIVED    // read-only, previous month
+}
+
+enum DistributionType {
+  BY_SHARE    // proportional to unit shareRatio (cota-parte)
+  EQUAL       // equal per unit
+  BY_PERSON   // proportional to number of residents
+  BY_AREA     // proportional to unit area in m²
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  OVERDUE
+}
+
+enum MeterType {
+  COLD_WATER
+  HOT_WATER
+  HEAT
+  ELECTRICITY
+  GAS
+}
+
+enum HeatingType {
+  DISTRICT      // termoficare de la oraș (RADET / SACET)
+  CENTRALIZED   // centrală termică proprie a blocului
+  INDIVIDUAL    // centrală proprie pe apartament / unitate
+  NONE          // fără încălzire activă / nespecificat
+}
+
+// One record per month per association
+model ExpensePeriod {
+  id             String        @id @default(cuid())
+  associationId  String
+  association    Association   @relation(fields: [associationId], references: [id])
+  year           Int
+  month          Int           // 1–12
+  status         PeriodStatus  @default(DRAFT)
+  notes          String?       @db.Text
+  generatedAt    DateTime?
+  createdBy      String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  expenses      Expense[]
+  meterReadings MeterReading[]
+  paymentItems  PaymentItem[]
+
+  @@unique([associationId, year, month])
+  @@index([associationId])
+}
+
+// One row per expense line (invoice / service)
+model Expense {
+  id               String           @id @default(cuid())
+  periodId         String
+  period           ExpensePeriod    @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  category         String
+  description      String
+  totalAmount      Float
+  distributionType DistributionType @default(BY_SHARE)
+  invoiceNumber    String?
+  invoiceDate      DateTime?
+  invoiceId        String?          // optional link to a saved Invoice
+  invoice          Invoice?         @relation(fields: [invoiceId], references: [id])
+  allocations      Json?            // [{type:"BY_SHARE",percentage:30},{type:"BY_AREA",percentage:70}]
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+}
+
+// ============================================================
+// INVOICES (facturi — separate from documents)
+// ============================================================
+
+model Invoice {
+  id            String      @id @default(cuid())
+  associationId String
+  association   Association @relation(fields: [associationId], references: [id])
+
+  // Core invoice data
+  invoiceNumber String?
+  invoiceDate   DateTime?
+  dueDate       DateTime?
+
+  // Amounts
+  totalAmount   Float?
+  vatAmount     Float?
+  netAmount     Float?
+  currency      String      @default("RON")
+
+  // Supplier (linked to directory or free text)
+  supplierId    String?
+  supplier      Supplier?   @relation(fields: [supplierId], references: [id])
+  supplierName  String?     // free-text fallback
+  supplierCui   String?     // extracted from OCR
+  iban          String?     // IBAN extras din OCR sau completat manual
+
+  // Content
+  category      String?     // expense category hint
+  description   String?     @db.Text
+  documentUrl   String?     // link to the actual file (Drive, etc.)
+
+  // OCR
+  ocrProcessed  Boolean     @default(false)
+  ocrRawData    Json?
+
+  // Classification
+  month         Int         // 1-12
+  year          Int
+
+  uploadedBy    String
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  expenses      Expense[]
+
+  @@index([associationId, year, month])
+}
+
+// Counter readings per unit per month
+model MeterReading {
+  id             String        @id @default(cuid())
+  periodId       String
+  period         ExpensePeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  unitId         String
+  unit           Unit          @relation(fields: [unitId], references: [id])
+  meterType      MeterType
+  previousIndex  Float         @default(0)
+  currentIndex   Float
+  consumption    Float         // currentIndex - previousIndex
+  unitPrice      Float?        // lei per unit consumed
+  readAt         DateTime
+  createdAt      DateTime      @default(now())
+
+  @@unique([periodId, unitId, meterType])
+}
+
+// What each owner owes for a given month
+model PaymentItem {
+  id             String        @id @default(cuid())
+  periodId       String
+  period         ExpensePeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  ownershipId    String
+  ownership      Ownership     @relation(fields: [ownershipId], references: [id])
+  unitAmount     Float         // share of expenses for this period
+  previousDebt   Float         @default(0)
+  totalDue       Float         // unitAmount + previousDebt
+  paidAmount     Float         @default(0)
+  paidAt         DateTime?
+  status         PaymentStatus @default(PENDING)
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([periodId, ownershipId])
+  @@index([ownershipId])
+}
+
+// ============================================================
+// SCOLI (Schools module)
+// ============================================================
+
+model Scoala {
+  id           String     @id @default(cuid())
+  uatId        String
+  uat          UAT        @relation(fields: [uatId], references: [id])
+
+  name         String
+  address      String
+  type         SchoolType
+  director     String?
+  contactEmail String?
+  contactPhone String?
+  website      String?
+
+  clase        Clasa[]
+  mandate      ScoalaMandat[]
+
+  status       String     @default("ACTIVE")
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+}
+
+model Clasa {
+  id         String   @id @default(cuid())
+  scoalaId   String
+  scoala     Scoala   @relation(fields: [scoalaId], references: [id])
+
+  an         Int      // 1–12
+  litera     String   // "A", "B", "C" etc.
+  diriginte  String
+  nrElevi    Int      @default(0)
+
+  orar       OrarClasa[]
+  inrolari   Inrolare[]
+
+  createdAt  DateTime @default(now())
+
+  @@unique([scoalaId, an, litera])
+}
+
+model OrarClasa {
+  id           String   @id @default(cuid())
+  clasaId      String
+  clasa        Clasa    @relation(fields: [clasaId], references: [id])
+
+  ziSaptamana  Int      // 1=Luni … 5=Vineri
+  ora          Int      // 1–8 (numărul orei)
+  materie      String
+  profesor     String?
+  sala         String?
+
+  @@index([clasaId, ziSaptamana])
+}
+
+model Inrolare {
+  id          String           @id @default(cuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id])
+  clasaId     String
+  clasa       Clasa            @relation(fields: [clasaId], references: [id])
+
+  numeElev    String           // prenumele copilului
+  status      EnrollmentStatus @default(PENDING)
+  requestedAt DateTime         @default(now())
+  approvedAt  DateTime?
+  approvedBy  String?
+
+  @@unique([userId, clasaId])
+  @@index([userId])
+}
+
+model ScoalaMandat {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  scoalaId  String
+  scoala    Scoala   @relation(fields: [scoalaId], references: [id])
+
+  isActive  Boolean  @default(true)
+  startDate DateTime @default(now())
+
+  @@unique([userId, scoalaId])
+}
+
+// ============================================================
+// SESIZĂRI (Civic complaints)
+// ============================================================
+
+model Sesizare {
+  id              String           @id @default(cuid())
+  associationId   String
+  association     Association      @relation(fields: [associationId], references: [id])
+  title           String
+  description     String           @db.Text
+  category        String
+  photos          Json             @default("[]")
+  routing         SesizareRouting  @default(UAT_GENERAL)
+  status          SesizareStatus   @default(OPEN)
+  submittedBy     String
+  submitter       User             @relation("SesizareSubmitter", fields: [submittedBy], references: [id])
+  respondedBy     String?
+  responder       User?            @relation("SesizareResponder", fields: [respondedBy], references: [id])
+  response        String?          @db.Text
+  respondedAt     DateTime?
+  reroutedAt      DateTime?
+  reroutedBy      String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([associationId, createdAt])
+  @@index([routing, status])
+}
+
+// ============================================================
+// DOCUMENTE OFICIALE ALE ASOCIAȚIEI
+// ============================================================
+
+model DocumentOficial {
+  id              String                @id @default(cuid())
+  associationId   String
+  association     Association           @relation(fields: [associationId], references: [id])
+  type            DocumentOficialType
+  title           String
+  fileUrl         String
+  fileSize        Int?
+  mimeType        String?
+  uploadedBy      String
+  uploader        User                  @relation("DocOficialUploader", fields: [uploadedBy], references: [id])
+  status          DocumentOficialStatus @default(PENDING_APPROVAL)
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectionReason String?               @db.Text
+  notes           String?               @db.Text
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([associationId, type])
+  @@index([associationId, status])
+}
+
+// ============================================================
+// SITUAȚII FINANCIARE
+// ============================================================
+
+model SituatieFinanciara {
+  id                    String                    @id @default(cuid())
+  associationId         String
+  association           Association               @relation(fields: [associationId], references: [id])
+  type                  SituatieFinanciaraType
+  year                  Int
+  period                String                    // "2024", "S1 2024", "T1 2024" etc.
+  status                SituatieFinanciaraStatus  @default(DRAFT)
+  fileUrl               String?
+  fileSize              Int?
+  mimeType              String?
+  generatedFromPlatform Boolean                   @default(false)
+  submittedBy           String?
+  submitter             User?                     @relation("SituatieSubmitter", fields: [submittedBy], references: [id])
+  submittedAt           DateTime?
+  approvedBy            String?
+  approvedAt            DateTime?
+  rejectionReason       String?                   @db.Text
+  notes                 String?                   @db.Text
+  createdAt             DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+
+  @@index([associationId, year])
+  @@index([status])
+}
+
+// ============================================================
+// PORTAL CONFIG (singleton — nav editabil din super admin)
+// ============================================================
+
+model PortalConfig {
+  id          String   @id @default("singleton")
+  // navConfig: { "OWNER": ["/dashboard", "/apartament", ...], "MANAGER": [...] }
+  navConfig   Json     @default("{}")
+  updatedAt   DateTime @updatedAt
+  updatedBy   String?
+}
+
+// ============================================================
+// REGISTRU PROPRIETARI — import decizii impunere DITL S1
+// ============================================================
+
+// Persoana fizică proprietar (independentă de contul de portal).
+// Câmpurile marcate GDPR nu se afișează public în asociație.
+model Persoana {
+  id            String           @id @default(cuid())
+
+  // GDPR-sensitive ↓
+  cnp           String           @unique   // cheie naturală; validat algoritm RO (279146358279)
+  tipAct        TipActIdentitate @default(CI)
+  serieAct      String?
+  numarAct      String?
+  // Adresă domiciliu — poate diferi de adresa unității deținute
+  domStrada     String?
+  domNumar      String?
+  domBloc       String?
+  domScara      String?
+  domEtaj       String?
+  domApartament String?
+  domSector     Int?
+  domLocalitate String?
+  domJudet      String?
+  // ↑ GDPR-sensitive
+
+  // Câmpuri publice în asociație
+  nume          String
+  prenume       String
+
+  // Legătură opțională cu contul de portal (se populează la înregistrare prin CNP)
+  userId        String?          @unique
+  user          User?            @relation(fields: [userId], references: [id])
+
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  detineri      Detinere[]
+
+  @@index([nume, prenume])
+}
+
+// Tabel de legătură M-N Persoana ↔ Unit cu atribute juridice proprii.
+// Soft-delete prin dataIesire (nu se șterge niciodată — istoric juridic valoros).
+model Detinere {
+  id                  String        @id @default(cuid())
+  persoanaId          String
+  persoana            Persoana      @relation(fields: [persoanaId], references: [id])
+  unitId              String
+  unit                Unit          @relation(fields: [unitId], references: [id])
+
+  cotaProprietate     Decimal       @db.Decimal(5, 4)   // 0 < cotă ≤ 1
+  nrDocumentDobandire String?
+  dataDobandire       DateTime
+  dataIesire          DateTime?     // NULL = deținere activă
+  tipDobandire        TipDobandire?
+
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  // Cheie naturală pentru idempotență la re-import
+  @@unique([persoanaId, unitId, dataDobandire])
+  @@index([unitId])
+  @@index([persoanaId])
+}
+
+// Anexe (boxe, garaje, parcări) asociate unei unități principale.
+// Apar în decizia DITL pe aceeași matricolă cu apartamentul.
+model Anexa {
+  id         String    @id @default(cuid())
+  unitId     String
+  unit       Unit      @relation(fields: [unitId], references: [id])
+
+  tipAnexa   TipAnexa
+  numarAnexa String
+  suprafata  Decimal?  @db.Decimal(8, 2)
+  localizare String?   // ex: "subsol"
+
+  createdAt  DateTime  @default(now())
+
+  // Cheie naturală pentru idempotență la re-import
+  @@unique([unitId, tipAnexa, numarAnexa])
+  @@index([unitId])
+}

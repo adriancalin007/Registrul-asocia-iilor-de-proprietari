@@ -2,86 +2,68 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { Rol } from "@prisma/client";
-import { inregistreazaAudit } from "@/lib/audit";
+import { UserRole, CertificateStatus, AuditAction } from "@prisma/client";
+import { logAudit, getClientIp } from "@/lib/audit";
 
 interface Params { params: { id: string } }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   const session = await auth();
-  if (!session) return NextResponse.json({ eroare: "Neautentificat" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const rol = session.user.rol as Rol;
-  if (rol !== Rol.ADMINISTRATOR && rol !== Rol.PRESEDINTE_CA && rol !== Rol.SUPER_ADMIN) {
-    return NextResponse.json({ eroare: "Acces interzis" }, { status: 403 });
+  const role = session.user.role as UserRole;
+  const canManage = ([UserRole.MANAGER, UserRole.BOARD_PRESIDENT, UserRole.SUPER_ADMIN] as UserRole[]).includes(role);
+  if (!canManage) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const { action, notes } = await req.json();
+
+  if (!["APPROVE", "REJECT", "ISSUE"].includes(action)) {
+    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   }
 
-  const { actiune, observatii } = await req.json();
+  const certificate = await prisma.certificate.findUnique({ where: { id: params.id } });
+  if (!certificate) return NextResponse.json({ error: "Certificate not found" }, { status: 404 });
 
-  if (!["APROBA", "RESPINGE", "EMITE"].includes(actiune)) {
-    return NextResponse.json({ eroare: "Acțiune invalidă" }, { status: 400 });
-  }
+  let newStatus: CertificateStatus;
+  let pdfUrl: string | undefined;
 
-  const adeverinta = await prisma.adeverinta.findUnique({
-    where: { id: params.id },
-    include: {
-      proprietate: {
-        include: {
-          utilizator: { select: { numeComplet: true } },
-          apartament: {
-            include: { bloc: { include: { asociatie: true } } },
-          },
-        },
-      },
-    },
-  });
-
-  if (!adeverinta) {
-    return NextResponse.json({ eroare: "Adeverință negăsită" }, { status: 404 });
-  }
-
-  let stareNoua: string;
-  let calePDF: string | undefined;
-
-  if (actiune === "APROBA") {
-    stareNoua = "APROBATA";
-  } else if (actiune === "RESPINGE") {
-    if (!observatii?.trim()) {
-      return NextResponse.json({ eroare: "Motivul respingerii este obligatoriu" }, { status: 400 });
+  if (action === "APPROVE") {
+    newStatus = CertificateStatus.APPROVED;
+  } else if (action === "REJECT") {
+    if (!notes?.trim()) {
+      return NextResponse.json({ error: "Rejection reason is required" }, { status: 400 });
     }
-    stareNoua = "RESPINSA";
+    newStatus = CertificateStatus.REJECTED;
   } else {
-    // EMITE — generăm referința PDF (în producție aici ar fi generarea reală)
-    stareNoua = "EMISA";
-    // Generăm un ID unic pentru PDF
-    // În faza 2 aceasta va fi o rută care generează PDF real
-    calePDF = `/adeverinte/${adeverinta.id}/pdf`;
+    newStatus = CertificateStatus.ISSUED;
+    pdfUrl = `/adeverinte/${certificate.id}/pdf`;
   }
 
-  await prisma.adeverinta.update({
+  await prisma.certificate.update({
     where: { id: params.id },
     data: {
-      stare: stareNoua as "APROBATA" | "RESPINSA" | "EMISA",
-      observatii: observatii ?? null,
-      aprobatDe: session.user.id,
-      dataEmitere: actiune === "EMITE" ? new Date() : null,
-      dataExpirare: actiune === "EMITE"
-        ? new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) // 90 zile
+      status: newStatus,
+      notes: notes ?? null,
+      approvedBy: session.user.id,
+      issuedAt: action === "ISSUE" ? new Date() : null,
+      expiresAt: action === "ISSUE"
+        ? new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) // 90 days
         : null,
-      calePDF: calePDF ?? null,
+      pdfUrl: pdfUrl ?? null,
     },
   });
 
-  await inregistreazaAudit({
-    utilizatorId: session.user.id,
-    rol,
-    tip: actiune === "RESPINGE" ? "RESPINGERE" : "APROBARE",
-    resursa: "Adeverinta",
-    resursaId: adeverinta.id,
-    asociatieId: adeverinta.asociatieId,
-    adeverintaId: adeverinta.id,
-    detalii: { actiune, tip: adeverinta.tip, observatii },
+  await logAudit({
+    userId: session.user.id,
+    role,
+    action: action === "REJECT" ? AuditAction.REJECT : AuditAction.APPROVE,
+    resource: "Certificate",
+    resourceId: certificate.id,
+    associationId: certificate.associationId,
+    certificateId: certificate.id,
+    metadata: { action, type: certificate.type, notes },
+    ipAddress: getClientIp(req),
   });
 
-  return NextResponse.json({ succes: true, stare: stareNoua });
+  return NextResponse.json({ success: true, status: newStatus });
 }

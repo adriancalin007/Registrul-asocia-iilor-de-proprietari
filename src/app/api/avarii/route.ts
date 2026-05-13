@@ -2,64 +2,72 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { Rol } from "@prisma/client";
-import { inregistreazaAudit } from "@/lib/audit";
+import { UserRole, AuditAction } from "@prisma/client";
+import { logAudit, getClientIp } from "@/lib/audit";
 import { cookies } from "next/headers";
 
-function genNrInregistrare(): string {
+function genTicketNumber(): string {
   const d = new Date();
-  return `AV-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}-${Math.floor(Math.random()*9000)+1000}`;
+  return `AV-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}-${Math.floor(Math.random() * 9000) + 1000}`;
 }
 
 export async function POST(req: NextRequest) {
   const session = await auth();
-  if (!session) return NextResponse.json({ eroare: "Neautentificat" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const rol = session.user.rol as Rol;
-  const { categorie, locatie, descriere, prioritate } = await req.json();
+  const role = session.user.role as UserRole;
+  const canReport = ([UserRole.MANAGER, UserRole.BOARD_PRESIDENT, UserRole.OWNER] as UserRole[]).includes(role);
+  if (!canReport) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-  if (!categorie || !locatie || !descriere) {
-    return NextResponse.json({ eroare: "Câmpuri obligatorii lipsă" }, { status: 400 });
+  const { category, location, description, priority } = await req.json();
+
+  if (!category || !location || !description) {
+    return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
   }
 
-  // Determinăm asociatieId
   const cookieStore = cookies();
-  let asociatieId = cookieStore.get("asociatie_activa")?.value;
+  let associationId = cookieStore.get("asociatie_activa")?.value;
 
-  if (!asociatieId) {
-    if (rol === Rol.PROPRIETAR) {
-      const prop = await prisma.proprietate.findFirst({
-        where: { utilizatorId: session.user.id, activ: true },
-        include: { apartament: { include: { bloc: true } } },
+  if (!associationId) {
+    if (role === UserRole.OWNER) {
+      const ownership = await prisma.ownership.findFirst({
+        where: { userId: session.user.id, isActive: true },
+        include: { unit: { include: { building: true } } },
       });
-      asociatieId = prop?.apartament.bloc.asociatieId;
+      associationId = ownership?.unit.building.associationId;
     } else {
-      const mandat = await prisma.mandat.findFirst({ where: { utilizatorId: session.user.id, activ: true } });
-      asociatieId = mandat?.asociatieId;
+      const mandate = await prisma.mandate.findFirst({
+        where: { userId: session.user.id, isActive: true },
+      });
+      associationId = mandate?.associationId;
     }
   }
 
-  if (!asociatieId) return NextResponse.json({ eroare: "Nu aveți o asociație activă" }, { status: 400 });
+  if (!associationId) return NextResponse.json({ error: "No active association" }, { status: 400 });
 
-  const avarie = await prisma.avarie.create({
+  const issue = await prisma.issue.create({
     data: {
-      asociatieId,
-      numarInregistrare: genNrInregistrare(),
-      categorie,
-      locatie,
-      descriere,
-      stare: "DESCHISA",
-      raportatDe: session.user.id,
+      associationId,
+      ticketNumber: genTicketNumber(),
+      category,
+      location,
+      description,
+      status: "OPEN",
+      reportedBy: session.user.id,
     },
   });
 
-  await inregistreazaAudit({
-    utilizatorId: session.user.id, rol,
-    tip: "CREARE", resursa: "Avarie",
-    resursaId: avarie.id, asociatieId,
-    avarieId: avarie.id,
-    detalii: { categorie, locatie, prioritate },
+  await logAudit({
+    userId: session.user.id,
+    role,
+    action: AuditAction.CREATE,
+    resource: "Issue",
+    resourceId: issue.id,
+    associationId,
+    issueId: issue.id,
+    metadata: { category, location, priority },
+    ipAddress: getClientIp(req),
   });
 
-  return NextResponse.json({ succes: true, id: avarie.id });
+  return NextResponse.json({ success: true, id: issue.id });
 }

@@ -45,6 +45,9 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     "association:view", "association:validate", "supplier:verify",
     "uat:dashboard", "uat:reports", "uat:audit", "uat:communications", "uat:configure",
   ],
+  POLICE_OPERATOR: [
+    "uat:dashboard", "uat:reports", "uat:communications",
+  ],
   SUPER_ADMIN: [
     "association:view", "association:create", "association:validate", "association:configure",
     "document:view", "document:upload", "document:approve", "document:delete",
@@ -82,7 +85,13 @@ export async function getUserRole(userId: string): Promise<{ role: UserRole | nu
 
   if (!user) return { role: null };
   if (user.superAdminAccount) return { role: UserRole.SUPER_ADMIN };
-  if (user.uatOperatorAccount) return { role: UserRole.UAT_OPERATOR, uatId: user.uatOperatorAccount.uatId };
+  if (user.uatOperatorAccount) {
+    const isPolice = user.uatOperatorAccount.operatorType === "POLICE";
+    return {
+      role: isPolice ? UserRole.POLICE_OPERATOR : UserRole.UAT_OPERATOR,
+      uatId: user.uatOperatorAccount.uatId,
+    };
+  }
 
   const priorityRoles = [UserRole.BOARD_PRESIDENT, UserRole.MANAGER, UserRole.AUDITOR];
   for (const r of priorityRoles) {
@@ -98,23 +107,25 @@ export async function getUserRole(userId: string): Promise<{ role: UserRole | nu
 
 export function getDefaultRouteForRole(role: UserRole): string {
   const routes: Record<UserRole, string> = {
-    SUPER_ADMIN: "/dashboard",
-    UAT_OPERATOR: "/uat",
-    BOARD_PRESIDENT: "/dashboard",
-    MANAGER: "/dashboard",
-    AUDITOR: "/financials",
-    SUPPLIER: "/suppliers/quotes",
-    OWNER: "/dashboard",
+    SUPER_ADMIN:      "/dashboard",
+    UAT_OPERATOR:     "/uat",
+    POLICE_OPERATOR:  "/uat/sesizari",
+    BOARD_PRESIDENT:  "/dashboard",
+    MANAGER:          "/dashboard",
+    AUDITOR:          "/financials",
+    SUPPLIER:         "/suppliers/quotes",
+    OWNER:            "/dashboard",
   };
   return routes[role] ?? "/dashboard";
 }
 
 export const ROLE_ROUTES: Record<UserRole, string[]> = {
-  OWNER: ["/dashboard", "/documents", "/consultations", "/certificates", "/issues"],
-  MANAGER: ["/dashboard", "/documents", "/issues", "/suppliers", "/certificates", "/agm", "/financials"],
-  BOARD_PRESIDENT: ["/dashboard", "/documents", "/consultations", "/certificates", "/issues", "/suppliers", "/agm", "/financials"],
-  AUDITOR: ["/financials", "/documents"],
-  SUPPLIER: ["/suppliers/quotes", "/suppliers/profile"],
-  UAT_OPERATOR: ["/uat", "/uat/associations", "/uat/suppliers", "/uat/reports", "/uat/audit", "/uat/map"],
-  SUPER_ADMIN: ["/dashboard", "/uat", "/associations", "/documents", "/consultations", "/certificates", "/issues", "/suppliers", "/agm", "/financials"],
+  OWNER:            ["/dashboard", "/documents", "/consultations", "/certificates", "/issues"],
+  MANAGER:          ["/dashboard", "/documents", "/issues", "/suppliers", "/certificates", "/agm", "/financials"],
+  BOARD_PRESIDENT:  ["/dashboard", "/documents", "/consultations", "/certificates", "/issues", "/suppliers", "/agm", "/financials"],
+  AUDITOR:          ["/financials", "/documents"],
+  SUPPLIER:         ["/suppliers/quotes", "/suppliers/profile"],
+  UAT_OPERATOR:     ["/uat", "/uat/associations", "/uat/suppliers", "/uat/reports", "/uat/audit", "/uat/map"],
+  POLICE_OPERATOR:  ["/uat/sesizari"],
+  SUPER_ADMIN:      ["/dashboard", "/uat", "/associations", "/documents", "/consultations", "/certificates", "/issues", "/suppliers", "/agm", "/financials"],
 };

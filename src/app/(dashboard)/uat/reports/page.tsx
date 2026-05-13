@@ -6,6 +6,13 @@ import { UserRole } from "@prisma/client";
 import Link from "next/link";
 import type { Metadata } from "next";
 
+const SCORE_CONFIG = {
+  CONFORME:    { label: "Conformă",    cls: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  AVERTISMENT: { label: "Avertisment", cls: "bg-amber-50 text-amber-700 border-amber-200" },
+  SOMATIE:     { label: "Somație",     cls: "bg-orange-50 text-orange-700 border-orange-200" },
+  SANCTIUNE:   { label: "Sancțiune",   cls: "bg-red-50 text-red-700 border-red-200" },
+};
+
 export const metadata: Metadata = { title: "Reports | UAT" };
 
 export default async function ReportsPage() {
@@ -16,11 +23,13 @@ export default async function ReportsPage() {
 
   const [
     total, active, pending, underReview, needsCompletion, rejected,
+    suspended, inactive, officialRegistry, dissolved,
     owners, verifiedSuppliers,
     totalConsultations, activeConsultations, closedConsultations,
     totalCertificates, issuedCertificates,
     totalIssues, openIssues, resolvedIssues,
     totalRfqs, perNeighborhood,
+    scoreBreakdown, assocWithOpenIssues, assocWithoutFinancials, topScored,
   ] = await Promise.all([
     prisma.association.count(),
     prisma.association.count({ where: { status: "ACTIVE" } }),
@@ -28,6 +37,10 @@ export default async function ReportsPage() {
     prisma.association.count({ where: { status: "UNDER_REVIEW" } }),
     prisma.association.count({ where: { status: "NEEDS_COMPLETION" } }),
     prisma.association.count({ where: { status: "REJECTED" } }),
+    prisma.association.count({ where: { status: "SUSPENDED" } }),
+    prisma.association.count({ where: { status: "INACTIVE" } }),
+    prisma.association.count({ where: { status: "OFFICIAL_REGISTRY" } }),
+    prisma.association.count({ where: { status: "DISSOLVED" } }),
     prisma.ownership.count({ where: { isActive: true } }),
     prisma.supplier.count({ where: { status: "VERIFIED" } }),
     prisma.consultation.count(),
@@ -40,23 +53,67 @@ export default async function ReportsPage() {
     prisma.issue.count({ where: { status: { in: ["RESOLVED","CLOSED"] } } }),
     prisma.rFQ.count(),
     prisma.association.groupBy({ by: ["neighborhood"], _count: { id: true }, orderBy: { _count: { id: "desc" } }, take: 8 }),
+    // Score breakdown by classification for active associations (latest public score per assoc)
+    prisma.associationScore.groupBy({
+      by: ["classification"],
+      where: { isPublic: true, association: { status: "ACTIVE" } },
+      _count: { id: true },
+    }),
+    // Active associations with open issues (top 10 by count)
+    prisma.association.findMany({
+      where: { status: "ACTIVE", issues: { some: { status: { in: ["OPEN", "IN_PROGRESS"] } } } },
+      select: {
+        id: true, name: true, neighborhood: true,
+        _count: { select: { issues: { where: { status: { in: ["OPEN", "IN_PROGRESS"] } } } } },
+      },
+      orderBy: { issues: { _count: "desc" } },
+      take: 10,
+    }),
+    // Active associations that have NOT submitted any financial report in the current year
+    prisma.association.findMany({
+      where: {
+        status: "ACTIVE",
+        situatiiFinanciare: { none: { year: new Date().getFullYear() } },
+      },
+      select: { id: true, name: true, neighborhood: true },
+      orderBy: [{ neighborhood: "asc" }, { name: "asc" }],
+      take: 50,
+    }),
+    // Top scored active associations
+    prisma.associationScore.findMany({
+      where: { isPublic: true, association: { status: "ACTIVE" } },
+      distinct: ["associationId"],
+      orderBy: [{ totalPoints: "desc" }, { calculatedAt: "desc" }],
+      take: 10,
+      select: {
+        associationId: true,
+        totalPoints: true,
+        maxPossible: true,
+        classification: true,
+        association: { select: { id: true, name: true, neighborhood: true } },
+      },
+    }),
   ]);
 
   const adoptionRate = total > 0 ? Math.round((active / total) * 100) : 0;
   const inProcess = pending + underReview + needsCompletion;
+  const inactiveTotal = inactive + officialRegistry + suspended + dissolved;
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
       <div className="page-header">
         <div>
           <div className="flex items-center gap-2 text-sm text-slate-400 mb-1">
-            <Link href="/uat" className="hover:text-slate-600">UAT Panel</Link>
+            <Link href="/uat" className="hover:text-slate-600">Panou UAT</Link>
             <span>›</span>
-            <span className="text-slate-700">Reports</span>
+            <span className="text-slate-700">Rapoarte</span>
           </div>
-          <h1 className="page-title">UAT Aggregate Reports</h1>
-          <p className="page-subtitle">Situation as of {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}</p>
+          <h1 className="page-title">Rapoarte UAT</h1>
+          <p className="page-subtitle">Situație la {new Date().toLocaleDateString("ro-RO", { day: "numeric", month: "long", year: "numeric" })}</p>
         </div>
+        <Link href="/uat/reports/verifications" className="btn-secondary text-sm">
+          Raport verificări operatori →
+        </Link>
       </div>
 
       {/* Adoption rate */}
@@ -85,6 +142,19 @@ export default async function ReportsPage() {
             ].map(s => (
               <div key={s.label}>
                 <p className={`text-2xl font-bold ${s.color}`}>{s.val}</p>
+                <p className="text-xs text-slate-400 mt-0.5">{s.label}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-4 gap-3 text-center text-sm">
+            {[
+              { label: "Registru oficial", val: officialRegistry, color: "text-slate-500" },
+              { label: "Inactive", val: inactive, color: "text-slate-400" },
+              { label: "Suspendate", val: suspended, color: "text-orange-500" },
+              { label: "Dizolvate", val: dissolved, color: "text-slate-400" },
+            ].map(s => (
+              <div key={s.label}>
+                <p className={`text-xl font-bold ${s.color}`}>{s.val}</p>
                 <p className="text-xs text-slate-400 mt-0.5">{s.label}</p>
               </div>
             ))}
@@ -139,7 +209,7 @@ export default async function ReportsPage() {
 
       {perNeighborhood.filter(n => n.neighborhood).length > 0 && (
         <div className="card">
-          <div className="card-header"><h2 className="font-semibold text-slate-900">Associations per neighborhood</h2></div>
+          <div className="card-header"><h2 className="font-semibold text-slate-900">Asociații pe cartier</h2></div>
           <div className="card-body space-y-3">
             {perNeighborhood.filter(n => n.neighborhood).map(n => {
               const pct = total > 0 ? Math.round((n._count.id / total) * 100) : 0;
@@ -155,6 +225,119 @@ export default async function ReportsPage() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Score breakdown */}
+      {scoreBreakdown.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="font-semibold text-slate-900">Clasificare asociații (scor UAT)</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Ultimul scor public per asociație activă</p>
+          </div>
+          <div className="card-body grid grid-cols-2 md:grid-cols-4 gap-4">
+            {(["CONFORME","AVERTISMENT","SOMATIE","SANCTIUNE"] as const).map(cls => {
+              const count = scoreBreakdown.find(s => s.classification === cls)?._count.id ?? 0;
+              return (
+                <Link key={cls} href={`/uat/associations?status=ACTIVE`}
+                  className={`rounded-2xl border px-4 py-4 text-center hover:opacity-80 transition-opacity ${SCORE_CONFIG[cls].cls}`}>
+                  <p className="text-3xl font-bold">{count}</p>
+                  <p className="text-xs font-semibold mt-1">{SCORE_CONFIG[cls].label}</p>
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Top scored */}
+      {topScored.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="font-semibold text-slate-900">Top asociații după scor</h2>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {topScored.map((s, idx) => {
+              const pct = Math.round((s.totalPoints / s.maxPossible) * 100);
+              const cfg = SCORE_CONFIG[s.classification as keyof typeof SCORE_CONFIG];
+              return (
+                <div key={s.associationId} className="flex items-center gap-4 px-6 py-3">
+                  <span className="text-sm font-bold text-slate-300 w-5 text-right flex-shrink-0">#{idx + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <Link href={`/uat/associations/${s.associationId}`}
+                      className="text-sm font-medium text-slate-800 hover:text-uat-700 truncate block">
+                      {s.association.name}
+                    </Link>
+                    {s.association.neighborhood && (
+                      <span className="text-xs text-slate-400">{s.association.neighborhood}</span>
+                    )}
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium flex-shrink-0 ${cfg?.cls ?? ""}`}>
+                    {cfg?.label ?? s.classification}
+                  </span>
+                  <span className="text-sm font-bold text-slate-700 w-12 text-right flex-shrink-0">{pct}%</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Associations with open issues */}
+      {assocWithOpenIssues.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="font-semibold text-slate-900 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-red-500" />
+              Asociații cu avarii deschise
+            </h2>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {assocWithOpenIssues.map(a => (
+              <div key={a.id} className="flex items-center justify-between px-6 py-3">
+                <div className="min-w-0 flex-1">
+                  <Link href={`/uat/associations/${a.id}`}
+                    className="text-sm font-medium text-slate-800 hover:text-uat-700 truncate block">
+                    {a.name}
+                  </Link>
+                  {a.neighborhood && <span className="text-xs text-slate-400">{a.neighborhood}</span>}
+                </div>
+                <span className="flex-shrink-0 text-sm font-bold text-red-600 bg-red-50 border border-red-100 px-2.5 py-0.5 rounded-full ml-4">
+                  {a._count.issues} deschise
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Associations without financial reports */}
+      {assocWithoutFinancials.length > 0 && (
+        <div className="card">
+          <div className="card-header">
+            <h2 className="font-semibold text-slate-900 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500" />
+              Asociații fără situații financiare în {new Date().getFullYear()}
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">{assocWithoutFinancials.length} asociații active nu au transmis niciun document financiar</p>
+          </div>
+          <div className="divide-y divide-slate-100 max-h-72 overflow-y-auto">
+            {assocWithoutFinancials.map(a => (
+              <div key={a.id} className="flex items-center justify-between px-6 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <Link href={`/uat/associations/${a.id}`}
+                    className="text-sm text-slate-700 hover:text-uat-700 truncate block">
+                    {a.name}
+                  </Link>
+                  {a.neighborhood && <span className="text-xs text-slate-400">{a.neighborhood}</span>}
+                </div>
+                <Link href={`/uat/associations/${a.id}`}
+                  className="flex-shrink-0 text-xs text-uat-600 hover:underline ml-4">
+                  Vezi dosarul →
+                </Link>
+              </div>
+            ))}
           </div>
         </div>
       )}

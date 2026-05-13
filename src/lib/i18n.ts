@@ -4,7 +4,7 @@ import en from "../../messages/en.json";
 
 export type Locale = "ro" | "en";
 export const LOCALES: Locale[] = ["ro", "en"];
-export const DEFAULT_LOCALE: Locale = "ro";
+export const DEFAULT_LOCALE: Locale = "en";
 
 export const messages = { ro, en } as const;
 

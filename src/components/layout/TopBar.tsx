@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { Session } from "next-auth";
 import { useI18n } from "@/components/i18n/I18nProvider";
 import LanguageSwitcher from "@/components/i18n/LanguageSwitcher";
+import HelpDrawer from "@/components/layout/HelpDrawer";
 
 export default function TopBar({ user }: { user: Session["user"] }) {
   const [open, setOpen] = useState(false);
@@ -15,6 +16,9 @@ export default function TopBar({ user }: { user: Session["user"] }) {
       <div className="flex items-center gap-3">
         {/* Language switcher */}
         <LanguageSwitcher />
+
+        {/* Contextual help */}
+        <HelpDrawer />
 
         {/* Notifications */}
         <button type="button" className="relative p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors">

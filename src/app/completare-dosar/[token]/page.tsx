@@ -9,17 +9,16 @@ export const metadata: Metadata = { title: "Completare dosar | UAT Sector 1" };
 interface Props { params: { token: string } }
 
 export default async function CompletareDosarPage({ params }: Props) {
-  const runda = await prisma.rundaCompletare.findUnique({
-    where: { tokenCompletare: params.token },
+  const round = await prisma.completionRound.findUnique({
+    where: { completionToken: params.token },
     include: {
-      asociatie: { select: { denumire: true, adresa: true, codFiscal: true } },
+      association: { select: { name: true, address: true, fiscalCode: true } },
     },
   });
 
-  if (!runda) notFound();
+  if (!round) notFound();
 
-  // Token expirat
-  if (new Date(runda.tokenExpirat) < new Date()) {
+  if (new Date(round.tokenExpiresAt) < new Date()) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-uat-950 via-uat-900 to-uat-800 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center">
@@ -35,8 +34,7 @@ export default async function CompletareDosarPage({ params }: Props) {
     );
   }
 
-  // Deja completat
-  if (runda.completat) {
+  if (round.isCompleted) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-uat-950 via-uat-900 to-uat-800 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center">
@@ -69,31 +67,28 @@ export default async function CompletareDosarPage({ params }: Props) {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-8">
-        {/* Info */}
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-white mb-2">Completare dosar</h1>
-          <p className="text-uat-300">{runda.asociatie.denumire}</p>
-          <p className="text-uat-400 text-sm">{runda.asociatie.adresa}</p>
+          <p className="text-uat-300">{round.association.name}</p>
+          <p className="text-uat-400 text-sm">{round.association.address}</p>
         </div>
 
-        {/* Ce a solicitat operatorul */}
         <div className="bg-amber-500/10 border border-amber-400/30 rounded-2xl p-5 mb-6">
           <div className="flex items-start gap-3">
             <span className="text-amber-400 text-xl flex-shrink-0">⚠</span>
             <div>
               <p className="font-semibold text-amber-200 mb-2">
-                Runda {runda.numarRunda} — Documente solicitate de operatorul UAT:
+                Runda {round.roundNumber} — Documente solicitate de operatorul UAT:
               </p>
-              <p className="text-amber-100 text-sm leading-relaxed whitespace-pre-line">{runda.lipsuri}</p>
+              <p className="text-amber-100 text-sm leading-relaxed whitespace-pre-line">{round.missingItems}</p>
             </div>
           </div>
         </div>
 
-        {/* Formular completare */}
-        <CompletareForm token={params.token} rundaId={runda.id} />
+        <CompletareForm token={params.token} rundaId={round.id} />
 
         <p className="text-center text-uat-400 text-xs mt-6">
-          Link valabil până la {new Date(runda.tokenExpirat).toLocaleDateString("ro-RO", {
+          Link valabil până la {new Date(round.tokenExpiresAt).toLocaleDateString("ro-RO", {
             day: "numeric", month: "long", year: "numeric"
           })}
         </p>

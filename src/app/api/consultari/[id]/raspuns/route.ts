@@ -2,40 +2,40 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { Rol } from "@prisma/client";
+import { ConsultationStatus } from "@prisma/client";
 
 interface Params { params: { id: string } }
 
 export async function POST(req: NextRequest, { params }: Params) {
   const session = await auth();
-  if (!session) return NextResponse.json({ eroare: "Neautentificat" }, { status: 401 });
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { proprietateId, optiuneIndex } = await req.json();
+  const { ownershipId, optionIndex } = await req.json();
 
-  // Verificăm că utilizatorul este proprietarul acestei proprietăți
-  const proprietate = await prisma.proprietate.findFirst({
-    where: { id: proprietateId, utilizatorId: session.user.id, activ: true },
+  // Verify user owns this ownership record
+  const ownership = await prisma.ownership.findFirst({
+    where: { id: ownershipId, userId: session.user.id, isActive: true },
   });
-  if (!proprietate) return NextResponse.json({ eroare: "Proprietate negăsită" }, { status: 403 });
+  if (!ownership) return NextResponse.json({ error: "Ownership not found" }, { status: 403 });
 
-  // Verificăm că consultarea este activă
-  const consultare = await prisma.consultare.findUnique({ where: { id: params.id } });
-  if (!consultare || consultare.stare !== "ACTIVA") {
-    return NextResponse.json({ eroare: "Consultarea nu este activă" }, { status: 400 });
+  // Verify consultation is active
+  const consultation = await prisma.consultation.findUnique({ where: { id: params.id } });
+  if (!consultation || consultation.status !== ConsultationStatus.ACTIVE) {
+    return NextResponse.json({ error: "Consultation is not active" }, { status: 400 });
   }
-  if (new Date(consultare.dataExpirare) < new Date()) {
-    return NextResponse.json({ eroare: "Consultarea a expirat" }, { status: 400 });
+  if (new Date(consultation.expiresAt) < new Date()) {
+    return NextResponse.json({ error: "Consultation has expired" }, { status: 400 });
   }
 
-  // Verificăm că nu a mai votat
-  const existent = await prisma.raspunsConsultare.findUnique({
-    where: { consultareId_proprietateId: { consultareId: params.id, proprietateId } },
+  // Check not already responded
+  const existing = await prisma.consultationResponse.findUnique({
+    where: { consultationId_ownershipId: { consultationId: params.id, ownershipId } },
   });
-  if (existent) return NextResponse.json({ eroare: "Ați exprimat deja punctul de vedere" }, { status: 409 });
+  if (existing) return NextResponse.json({ error: "You have already responded" }, { status: 409 });
 
-  await prisma.raspunsConsultare.create({
-    data: { consultareId: params.id, proprietateId, optiuneIndex },
+  await prisma.consultationResponse.create({
+    data: { consultationId: params.id, ownershipId, optionIndex },
   });
 
-  return NextResponse.json({ succes: true });
+  return NextResponse.json({ success: true });
 }

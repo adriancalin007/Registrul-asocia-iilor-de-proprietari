@@ -1,6 +1,6 @@
 // src/lib/audit.ts
 import { prisma } from "@/lib/prisma";
-import { UserRole, AuditAction } from "@prisma/client";
+import { UserRole, AuditAction, Prisma } from "@prisma/client";
 
 interface AuditParams {
   userId: string;
@@ -38,7 +38,7 @@ export async function logAudit(params: AuditParams): Promise<void> {
         resource: params.resource,
         resourceId: params.resourceId,
         associationId: params.associationId,
-        metadata: params.metadata ?? {},
+        metadata: (params.metadata ?? {}) as unknown as Prisma.InputJsonValue,
         ipAddress: params.ipAddress,
         documentId: params.documentId,
         consultationId: params.consultationId,
@@ -61,7 +61,7 @@ export async function logUATAudit(params: UATAuditParams): Promise<void> {
         action: params.action,
         resource: params.resource,
         resourceId: params.resourceId,
-        metadata: params.metadata ?? {},
+        metadata: (params.metadata ?? {}) as unknown as Prisma.InputJsonValue,
         ipAddress: params.ipAddress,
       },
     });

@@ -9,7 +9,7 @@ import { getServerTranslator } from "@/lib/get-locale";
 
 export const metadata: Metadata = { title: "Asociații | UAT" };
 
-interface Props { searchParams: { status?: string } }
+interface Props { searchParams: { status?: string; q?: string } }
 
 export default async function AssociationsPage({ searchParams }: Props) {
   const session = await auth();
@@ -19,6 +19,7 @@ export default async function AssociationsPage({ searchParams }: Props) {
 
   const { t } = getServerTranslator();
   const filterStatus = searchParams.status;
+  const search = searchParams.q?.trim() ?? "";
 
   // Status config INSIDE function so t() is available
   const STATUS_CONFIG: Record<string, { label: string; dot: string; badgeClass: string; btnLabel: string; btnClass: string }> = {
@@ -38,12 +39,29 @@ export default async function AssociationsPage({ searchParams }: Props) {
     { label: t("status.underReview"),              value: "UNDER_REVIEW",      icon: "🔍" },
     { label: t("status.needsCompletion"),          value: "NEEDS_COMPLETION",  icon: "📝" },
     { label: t("status.rejected"),                 value: "REJECTED",          icon: "🚫" },
+    { label: t("status.suspended"),                value: "SUSPENDED",         icon: "🔴" },
     { label: t("status.inactive"),                 value: "INACTIVE",          icon: "⚫" },
   ];
 
+  const searchWhere = search
+    ? {
+        OR: [
+          { name:       { contains: search, mode: "insensitive" as const } },
+          { address:    { contains: search, mode: "insensitive" as const } },
+          { rawAddress: { contains: search, mode: "insensitive" as const } },
+          { fiscalCode: { contains: search, mode: "insensitive" as const } },
+        ],
+      }
+    : {};
+
   const [associations, statusCounts] = await Promise.all([
     prisma.association.findMany({
-      where: filterStatus ? { status: filterStatus as never } : {},
+      where: {
+        AND: [
+          filterStatus ? { status: filterStatus as never } : {},
+          searchWhere,
+        ],
+      },
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
       include: {
         _count: {
@@ -62,6 +80,7 @@ export default async function AssociationsPage({ searchParams }: Props) {
   let total = 0;
   statusCounts.forEach(s => { countPerStatus[s.status] = s._count.id; total += s._count.id; });
   const countActionNeeded = (countPerStatus["PENDING"] ?? 0) + (countPerStatus["UNDER_REVIEW"] ?? 0) + (countPerStatus["NEEDS_COMPLETION"] ?? 0);
+  const countProblematic = (countPerStatus["SUSPENDED"] ?? 0) + (countPerStatus["INACTIVE"] ?? 0);
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -82,6 +101,13 @@ export default async function AssociationsPage({ searchParams }: Props) {
               {t("associations.needAction", { count: countActionNeeded })}
             </div>
           )}
+          {countProblematic > 0 && (
+            <a href="/uat/associations?status=SUSPENDED"
+              className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-800 px-3 py-1.5 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+              {countProblematic} suspendate / inactive
+            </a>
+          )}
           <div className="card px-4 py-2 text-center">
             <p className="text-xl font-bold text-slate-900">{total}</p>
             <p className="text-xs text-slate-400">total</p>
@@ -97,6 +123,28 @@ export default async function AssociationsPage({ searchParams }: Props) {
         </div>
       </div>
 
+      {/* Search */}
+      <form method="GET" action="/uat/associations" className="flex gap-2 max-w-lg">
+        {filterStatus && <input type="hidden" name="status" value={filterStatus} />}
+        <input
+          name="q"
+          defaultValue={search}
+          className="input flex-1"
+          placeholder="Caută după nume, adresă, CIF..."
+          autoComplete="off"
+        />
+        <button type="submit" className="btn-primary px-5">Caută</button>
+        {search && (
+          <a href={filterStatus ? `/uat/associations?status=${filterStatus}` : "/uat/associations"}
+            className="btn-secondary px-4">✕</a>
+        )}
+      </form>
+      {search && (
+        <p className="text-sm text-slate-500 -mt-2">
+          {associations.length} rezultate pentru „{search}"
+        </p>
+      )}
+
       {/* Filters */}
       <div className="nav-tabs w-fit flex-wrap">
         {FILTERS.map(f => {
@@ -104,7 +152,11 @@ export default async function AssociationsPage({ searchParams }: Props) {
           const isActive = filterStatus === f.value || (!filterStatus && !f.value);
           return (
             <Link key={f.label}
-              href={f.value ? `/uat/associations?status=${f.value}` : "/uat/associations"}
+              href={
+                f.value
+                  ? `/uat/associations?status=${f.value}${search ? `&q=${encodeURIComponent(search)}` : ""}`
+                  : `/uat/associations${search ? `?q=${encodeURIComponent(search)}` : ""}`
+              }
               className={isActive ? "nav-tab-active" : "nav-tab"}>
               <span>{f.icon}</span>
               <span>{f.label}</span>
